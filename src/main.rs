@@ -87,6 +87,7 @@ enum Control {
     Navigate { url: String },
     Go { text: String },
     Key { key: String },
+    InsertText { text: String },
     Screencast { enabled: bool },
     SelectTab { id: String },
 }
@@ -462,7 +463,15 @@ async fn controls(mut socket: WebSocket, app: App) {
                         json!({"type":"mousePressed","x":x,"y":y,"button":"left","clickCount":1}),
                     )
                     .await;
-                match down { Ok(_) => cdp.command("Input.dispatchMouseEvent", json!({"type":"mouseReleased","x":x,"y":y,"button":"left","clickCount":1})).await, Err(error) => Err(error) }
+                match down {
+                    Ok(_) => {
+                        match cdp.command("Input.dispatchMouseEvent", json!({"type":"mouseReleased","x":x,"y":y,"button":"left","clickCount":1})).await {
+                            Ok(_) => cdp.command("Runtime.evaluate", json!({"expression":format!("(()=>{{const e=document.elementFromPoint({x},{y});return !!e&&(e.matches('input,textarea')||e.isContentEditable)}})()"),"returnByValue":true})).await.map(|hit| json!({"text_input":hit["result"]["result"]["value"].as_bool().unwrap_or(false)})),
+                            Err(error) => Err(error),
+                        }
+                    }
+                    Err(error) => Err(error),
+                }
             }
             Ok(Control::Scroll { x, y, delta_y }) => {
                 cdp.command(
@@ -492,6 +501,7 @@ async fn controls(mut socket: WebSocket, app: App) {
                     Err(error) => Err(error),
                 }
             }
+            Ok(Control::InsertText { text }) => cdp.command("Input.insertText", json!({"text":text})).await,
             Ok(Control::Screencast { enabled }) => cdp.command(
                 if enabled { "Page.startScreencast" } else { "Page.stopScreencast" },
                 if enabled { json!({"format":"jpeg", "quality":70, "maxWidth":430, "maxHeight":932, "everyNthFrame":1}) } else { json!({}) },
@@ -503,8 +513,9 @@ async fn controls(mut socket: WebSocket, app: App) {
         };
         let after = window_state();
         let text = match result {
-            Ok(_) => json!({
+            Ok(result) => json!({
                 "ok": true,
+                "result": result,
                 "foreground_unchanged": before.0 == after.0,
                 "cursor_unchanged": before.1 == after.1 && before.2 == after.2,
             })
@@ -532,6 +543,8 @@ fn cdp_key(key: &str) -> (&str, &str, u16) {
         "Space" => (" ", "Space", 32),
         "ArrowLeft" => ("ArrowLeft", "ArrowLeft", 37),
         "ArrowRight" => ("ArrowRight", "ArrowRight", 39),
+        "Backspace" => ("Backspace", "Backspace", 8),
+        "Enter" => ("Enter", "Enter", 13),
         _ => (key, key, 0),
     }
 }
