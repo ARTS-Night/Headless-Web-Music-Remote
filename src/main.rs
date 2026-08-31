@@ -69,6 +69,7 @@ enum Control {
     Forward,
     Reload,
     Navigate { url: String },
+    Go { text: String },
     Key { key: String },
     Screencast { enabled: bool },
 }
@@ -293,6 +294,7 @@ async fn controls(mut socket: WebSocket, cdp: Cdp) {
             Ok(Control::Forward) => cdp.command("Page.goForward", json!({})).await,
             Ok(Control::Reload) => cdp.command("Page.reload", json!({})).await,
             Ok(Control::Navigate { url }) => cdp.command("Page.navigate", json!({"url":url})).await,
+            Ok(Control::Go { text }) => cdp.command("Page.navigate", json!({"url": navigation_url(&text)})).await,
             Ok(Control::Key { key }) => {
                 let (key_value, code, virtual_key) = cdp_key(&key);
                 let down = cdp
@@ -347,5 +349,30 @@ fn cdp_key(key: &str) -> (&str, &str, u16) {
         "ArrowLeft" => ("ArrowLeft", "ArrowLeft", 37),
         "ArrowRight" => ("ArrowRight", "ArrowRight", 39),
         _ => (key, key, 0),
+    }
+}
+
+fn navigation_url(text: &str) -> String {
+    let text = text.trim();
+    if text.starts_with("https://") || text.starts_with("http://") {
+        text.into()
+    } else {
+        format!(
+            "https://www.google.com/search?q={}",
+            url::form_urlencoded::byte_serialize(text.as_bytes()).collect::<String>()
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::navigation_url;
+    #[test]
+    fn url_or_search() {
+        assert_eq!(navigation_url("https://example.com"), "https://example.com");
+        assert_eq!(
+            navigation_url("hello world"),
+            "https://www.google.com/search?q=hello+world"
+        );
     }
 }
