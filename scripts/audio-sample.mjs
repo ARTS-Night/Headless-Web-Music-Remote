@@ -1,4 +1,6 @@
 const host = process.env.HWMR_URL ?? 'http://127.0.0.1:8787';
+const token = process.env.HWMR_TOKEN; if (!token) throw Error('set HWMR_TOKEN after pairing');
+const headers = { authorization: `Bearer ${token}` };
 const seconds = Number(process.env.HWMR_DURATION_SECONDS ?? 600);
 const interval = Number(process.env.HWMR_SAMPLE_SECONDS ?? 60) * 1000;
 const profile = `${process.env.LOCALAPPDATA}\\HWMR\\browser-profile\\DevToolsActivePort`;
@@ -17,8 +19,8 @@ function evaluate(expression) {
 
 async function sample() {
   const [audio, isolation, media] = await Promise.all([
-    fetch(`${host}/audio`).then(response => response.json()),
-    fetch(`${host}/isolation`).then(response => response.json()),
+    fetch(`${host}/audio`, { headers }).then(response => response.json()),
+    fetch(`${host}/isolation`, { headers }).then(response => response.json()),
     evaluate('(()=>{const m=document.querySelector("video");return m&&{paused:m.paused,currentTime:m.currentTime}})()'),
   ]);
   console.log(JSON.stringify({ timestamp: new Date().toISOString(), target_id: target.id, media, audio, isolation }));
