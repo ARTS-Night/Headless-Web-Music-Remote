@@ -67,6 +67,7 @@ enum Control {
     Forward,
     Reload,
     Navigate { url: String },
+    Key { key: String },
 }
 
 #[derive(Serialize)]
@@ -271,6 +272,22 @@ async fn controls(mut socket: WebSocket, cdp: Cdp) {
             Ok(Control::Forward) => cdp.command("Page.goForward", json!({})).await,
             Ok(Control::Reload) => cdp.command("Page.reload", json!({})).await,
             Ok(Control::Navigate { url }) => cdp.command("Page.navigate", json!({"url":url})).await,
+            Ok(Control::Key { key }) => {
+                let (key_value, code, virtual_key) = cdp_key(&key);
+                let down = cdp
+                    .command(
+                        "Input.dispatchKeyEvent",
+                        json!({"type":"keyDown","key":key_value,"code":code,"windowsVirtualKeyCode":virtual_key,"nativeVirtualKeyCode":virtual_key}),
+                    )
+                    .await;
+                match down {
+                    Ok(_) => {
+                        cdp.command("Input.dispatchKeyEvent", json!({"type":"keyUp","key":key_value,"code":code,"windowsVirtualKeyCode":virtual_key,"nativeVirtualKeyCode":virtual_key}))
+                            .await
+                    }
+                    Err(error) => Err(error),
+                }
+            }
             Err(error) => Err(error.into()),
         };
         let after = window_state();
@@ -297,4 +314,13 @@ fn window_state() -> (isize, i32, i32) {
     let mut point = POINT { x: 0, y: 0 };
     unsafe { GetCursorPos(&mut point) };
     (unsafe { GetForegroundWindow() } as isize, point.x, point.y)
+}
+
+fn cdp_key(key: &str) -> (&str, &str, u16) {
+    match key {
+        "Space" => (" ", "Space", 32),
+        "ArrowLeft" => ("ArrowLeft", "ArrowLeft", 37),
+        "ArrowRight" => ("ArrowRight", "ArrowRight", 39),
+        _ => (key, key, 0),
+    }
 }
