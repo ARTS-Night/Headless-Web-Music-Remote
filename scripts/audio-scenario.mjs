@@ -29,3 +29,4 @@ await control({type:'screencast',enabled:false}); await wait(5000); const stoppe
 await control({type:'screencast',enabled:true}); const frame = await new Promise((resolve,reject)=>{const ws=new WebSocket('ws://127.0.0.1:8787/ws/frame'),timer=setTimeout(()=>{ws.close();reject(new Error('no frame after screencast restart'))},5000);ws.binaryType='arraybuffer';ws.onopen=()=>ws.send(JSON.stringify({type:'auth',token}));ws.onmessage=e=>{clearTimeout(timer);ws.close();resolve(e.data.byteLength)}}); expect(frame > 0, 'frame recovery');
 const browser = `${cdpBase}${browserPath}`; const tab = await command(browser, 'Target.createTarget', {url:'about:blank'}); await command(browser, 'Target.activateTarget', {targetId:tab.targetId}); await wait(500); await sample('other_tab_active'); await command(browser, 'Target.activateTarget', {targetId:page.id}); await wait(500); await sample('original_tab_restored');
 console.log('PASS: audio scenario complete');
+process.exit(0);
