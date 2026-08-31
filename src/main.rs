@@ -106,6 +106,7 @@ async fn main() -> Result<()> {
         .route("/", get(index))
         .route("/health", get(health))
         .route("/audio", get(audio_status))
+        .route("/isolation", get(isolation_status))
         .route("/ws/frame", get(frame_ws))
         .route("/ws/control", get(control_ws))
         .with_state(app);
@@ -246,6 +247,12 @@ async fn audio_status() -> impl IntoResponse {
         )
             .into_response(),
     }
+}
+async fn isolation_status() -> impl IntoResponse {
+    let state = window_state();
+    axum::Json(
+        serde_json::json!({"foreground_window": state.0, "cursor": {"x": state.1, "y": state.2}}),
+    )
 }
 async fn frame_ws(ws: WebSocketUpgrade, State(app): State<App>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| frames(socket, app.frames))
