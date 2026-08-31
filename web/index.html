@@ -1,0 +1,8 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>HWMR</title>
+<style>html,body{margin:0;background:#111;color:#eee;font:14px system-ui;height:100%;overflow:hidden}#screen{width:100%;height:100%;object-fit:contain;display:block}#bar{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:8px}button{border:0;border-radius:18px;padding:9px 13px;background:#292929;color:#fff}</style>
+<img id="screen" alt="Remote Brave screen"><div id="bar"><button data-action="back">←</button><button data-action="reload">↻</button><button data-action="forward">→</button></div>
+<script>
+const image=document.querySelector('#screen'),control=new WebSocket(`ws://${location.host}/ws/control`),frames=new WebSocket(`ws://${location.host}/ws/frame`);frames.binaryType='blob';frames.onmessage=e=>{const old=image.src;image.src=URL.createObjectURL(e.data);if(old)URL.revokeObjectURL(old)};function point(e){const r=image.getBoundingClientRect();return{x:(e.clientX-r.left)*430/r.width,y:(e.clientY-r.top)*932/r.height}}image.onclick=e=>control.send(JSON.stringify({type:'tap',...point(e)}));image.onwheel=e=>{e.preventDefault();control.send(JSON.stringify({type:'scroll',...point(e),delta_y:e.deltaY}))};document.querySelectorAll('button').forEach(b=>b.onclick=()=>control.send(JSON.stringify({type:b.dataset.action})));
+</script>
