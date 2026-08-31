@@ -32,7 +32,10 @@ const VIEWPORT: &str = "430,932";
 
 #[derive(Clone)]
 struct App {
-    cdp: Cdp,
+    port: u16,
+    active_id: Arc<Mutex<String>>,
+    active: Arc<Mutex<Cdp>>,
+    frame_tx: watch::Sender<Vec<u8>>,
     frames: watch::Receiver<Vec<u8>>,
 }
 
@@ -54,8 +57,11 @@ struct Cdp {
 
 #[derive(Deserialize)]
 struct Target {
+    id: String,
     #[serde(rename = "type")]
     kind: String,
+    title: String,
+    url: String,
     #[serde(rename = "webSocketDebuggerUrl")]
     websocket: String,
 }
@@ -72,6 +78,7 @@ enum Control {
     Go { text: String },
     Key { key: String },
     Screencast { enabled: bool },
+    SelectTab { id: String },
 }
 
 #[derive(Serialize)]
@@ -86,7 +93,15 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&profile)?;
     let port = launch_brave(&profile).await?;
     let target = page_target(port).await?;
-    let (cdp, frames) = Cdp::connect(target.websocket).await?;
+    let active_id = Arc::new(Mutex::new(target.id.clone()));
+    let (frame_tx, frames) = watch::channel(Vec::new());
+    let cdp = Cdp::connect(
+        target.websocket,
+        target.id.clone(),
+        active_id.clone(),
+        frame_tx.clone(),
+    )
+    .await?;
     cdp.command("Page.enable", json!({})).await?;
     let visibility = cdp
         .command(
@@ -103,12 +118,19 @@ async fn main() -> Result<()> {
         json!({"format":"jpeg", "quality":70, "maxWidth":430, "maxHeight":932, "everyNthFrame":1}),
     )
     .await?;
-    let app = App { cdp, frames };
+    let app = App {
+        port,
+        active_id,
+        active: Arc::new(Mutex::new(cdp)),
+        frame_tx,
+        frames,
+    };
     let router = Router::new()
         .route("/", get(index))
         .route("/health", get(health))
         .route("/audio", get(audio_status))
         .route("/isolation", get(isolation_status))
+        .route("/tabs", get(tabs))
         .route("/ws/frame", get(frame_ws))
         .route("/ws/control", get(control_ws))
         .with_state(app);
@@ -166,8 +188,23 @@ async fn page_target(port: u16) -> Result<Target> {
     bail!("No CDP page target created")
 }
 
+async fn page_targets(port: u16) -> Result<Vec<Target>> {
+    Ok(reqwest::get(format!("http://127.0.0.1:{port}/json/list"))
+        .await?
+        .json::<Vec<Target>>()
+        .await?
+        .into_iter()
+        .filter(|target| target.kind == "page")
+        .collect())
+}
+
 impl Cdp {
-    async fn connect(url: String) -> Result<(Self, watch::Receiver<Vec<u8>>)> {
+    async fn connect(
+        url: String,
+        target_id: String,
+        active_id: Arc<Mutex<String>>,
+        frame_tx: watch::Sender<Vec<u8>>,
+    ) -> Result<Self> {
         let (socket, _) = tokio_tungstenite::connect_async(url).await?;
         let (writer, mut reader) = socket.split();
         let cdp = Self {
@@ -175,7 +212,6 @@ impl Cdp {
             pending: Arc::new(Mutex::new(HashMap::new())),
             next_id: Arc::new(Mutex::new(0)),
         };
-        let (frame_tx, frame_rx) = watch::channel(Vec::new());
         let responses = cdp.pending.clone();
         let acker = cdp.writer.clone();
         tokio::spawn(async move {
@@ -194,7 +230,9 @@ impl Cdp {
                     if let Some(data) = params["data"].as_str().and_then(|data| {
                         base64::engine::general_purpose::STANDARD.decode(data).ok()
                     }) {
-                        let _ = frame_tx.send(data);
+                        if *active_id.lock().await == target_id {
+                            let _ = frame_tx.send(data);
+                        }
                     }
                     if let Some(session_id) = params["sessionId"].as_u64() {
                         let ack = json!({"id": 0, "method":"Page.screencastFrameAck", "params":{"sessionId":session_id}});
@@ -207,7 +245,7 @@ impl Cdp {
                 }
             }
         });
-        Ok((cdp, frame_rx))
+        Ok(cdp)
     }
 
     async fn command(&self, method: &str, params: Value) -> Result<Value> {
@@ -256,11 +294,20 @@ async fn isolation_status() -> impl IntoResponse {
         serde_json::json!({"foreground_window": state.0, "cursor": {"x": state.1, "y": state.2}}),
     )
 }
+async fn tabs(State(app): State<App>) -> impl IntoResponse {
+    match page_targets(app.port).await {
+        Ok(items) => {
+            let active = app.active_id.lock().await.clone();
+            axum::Json(serde_json::json!({"type":"tabs", "items": items.into_iter().map(|target| json!({"id":target.id,"title":target.title,"url":target.url,"active":target.id == active})).collect::<Vec<_>>() })).into_response()
+        }
+        Err(error) => (axum::http::StatusCode::BAD_GATEWAY, error.to_string()).into_response(),
+    }
+}
 async fn frame_ws(ws: WebSocketUpgrade, State(app): State<App>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| frames(socket, app.frames))
 }
 async fn control_ws(ws: WebSocketUpgrade, State(app): State<App>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| controls(socket, app.cdp))
+    ws.on_upgrade(move |socket| controls(socket, app))
 }
 async fn frames(mut socket: WebSocket, mut frames: watch::Receiver<Vec<u8>>) {
     while frames.changed().await.is_ok() {
@@ -270,10 +317,45 @@ async fn frames(mut socket: WebSocket, mut frames: watch::Receiver<Vec<u8>>) {
         }
     }
 }
-async fn controls(mut socket: WebSocket, cdp: Cdp) {
+async fn select_tab(app: &App, id: &str) -> Result<Value> {
+    let target = page_targets(app.port)
+        .await?
+        .into_iter()
+        .find(|target| target.id == id)
+        .context("unknown or closed page target")?;
+    if *app.active_id.lock().await == target.id {
+        return Ok(json!({"already_active":true}));
+    }
+    app.active
+        .lock()
+        .await
+        .command("Page.stopScreencast", json!({}))
+        .await?;
+    let next = Cdp::connect(
+        target.websocket,
+        target.id.clone(),
+        app.active_id.clone(),
+        app.frame_tx.clone(),
+    )
+    .await?;
+    next.command("Page.enable", json!({})).await?;
+    *app.active_id.lock().await = target.id;
+    next.command(
+        "Page.startScreencast",
+        json!({"format":"jpeg", "quality":70, "maxWidth":430, "maxHeight":932, "everyNthFrame":1}),
+    )
+    .await?;
+    *app.active.lock().await = next;
+    Ok(json!({"selected":id}))
+}
+async fn controls(mut socket: WebSocket, app: App) {
     while let Some(Ok(Message::Text(text))) = socket.recv().await {
         let before = window_state();
         let result = match serde_json::from_str::<Control>(&text) {
+            Ok(Control::SelectTab { id }) => select_tab(&app, &id).await,
+            command => {
+                let cdp = app.active.lock().await.clone();
+                match command {
             Ok(Control::Tap { x, y }) => {
                 let down = cdp
                     .command(
@@ -316,6 +398,9 @@ async fn controls(mut socket: WebSocket, cdp: Cdp) {
                 if enabled { json!({"format":"jpeg", "quality":70, "maxWidth":430, "maxHeight":932, "everyNthFrame":1}) } else { json!({}) },
             ).await,
             Err(error) => Err(error.into()),
+            Ok(Control::SelectTab { .. }) => unreachable!(),
+                }
+            }
         };
         let after = window_state();
         let text = match result {
