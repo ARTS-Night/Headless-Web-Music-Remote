@@ -1,3 +1,5 @@
+mod audio;
+
 use std::{collections::HashMap, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
@@ -103,6 +105,7 @@ async fn main() -> Result<()> {
     let router = Router::new()
         .route("/", get(index))
         .route("/health", get(health))
+        .route("/audio", get(audio_status))
         .route("/ws/frame", get(frame_ws))
         .route("/ws/control", get(control_ws))
         .with_state(app);
@@ -233,6 +236,16 @@ async fn index() -> Html<&'static str> {
 }
 async fn health() -> impl IntoResponse {
     axum::Json(Status { status: "ok" })
+}
+async fn audio_status() -> impl IntoResponse {
+    match audio::sessions() {
+        Ok(sessions) => axum::Json(serde_json::json!({"sessions": sessions})).into_response(),
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            error.to_string(),
+        )
+            .into_response(),
+    }
 }
 async fn frame_ws(ws: WebSocketUpgrade, State(app): State<App>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| frames(socket, app.frames))
