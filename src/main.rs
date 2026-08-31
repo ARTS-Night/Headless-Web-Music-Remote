@@ -434,6 +434,10 @@ async fn frames(mut socket: WebSocket, app: App) {
         return;
     }
     let mut frames = app.frames;
+    let initial = frames.borrow().clone();
+    if !initial.is_empty() && socket.send(Message::Binary(initial.into())).await.is_err() {
+        return;
+    }
     while frames.changed().await.is_ok() {
         let frame = frames.borrow().clone();
         if socket.send(Message::Binary(frame.into())).await.is_err() {
