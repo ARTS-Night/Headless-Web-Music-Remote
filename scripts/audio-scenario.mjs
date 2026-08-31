@@ -1,4 +1,6 @@
 const host = 'http://127.0.0.1:8787';
+const token = process.env.HWMR_TOKEN; if (!token) throw Error('set HWMR_TOKEN after pairing');
+const headers = {authorization:`Bearer ${token}`};
 const profile = `${process.env.LOCALAPPDATA}\\HWMR\\browser-profile\\DevToolsActivePort`;
 const [port, browserPath] = (await (await import('node:fs/promises')).readFile(profile, 'utf8')).trim().split(/\r?\n/);
 const cdpBase = `ws://127.0.0.1:${port}`;
@@ -7,11 +9,11 @@ const command = (url, method, params = {}) => new Promise((resolve, reject) => {
   const ws = new WebSocket(url); ws.onopen = () => ws.send(JSON.stringify({id: 1, method, params}));
   ws.onmessage = event => { const message = JSON.parse(event.data); if (message.id === 1) { ws.close(); message.error ? reject(message.error) : resolve(message.result); } }; ws.onerror = reject;
 });
-const control = message => new Promise((resolve, reject) => { const ws = new WebSocket('ws://127.0.0.1:8787/ws/control'); ws.onopen = () => ws.send(JSON.stringify(message)); ws.onmessage = event => { ws.close(); resolve(JSON.parse(event.data)); }; ws.onerror = reject; });
+const control = message => new Promise((resolve, reject) => { const ws = new WebSocket('ws://127.0.0.1:8787/ws/control'); ws.onopen = () => { ws.send(JSON.stringify({type:'auth',token})); ws.send(JSON.stringify(message)); }; ws.onmessage = event => { ws.close(); resolve(JSON.parse(event.data)); }; ws.onerror = reject; });
 const pages = () => fetch(`http://127.0.0.1:${port}/json/list`).then(response => response.json());
 let page = (await pages()).find(target => target.type === 'page');
 const media = () => command(page.webSocketDebuggerUrl, 'Runtime.evaluate', {expression:'(()=>{const m=document.querySelector("video");return m&&{paused:m.paused,currentTime:m.currentTime,visibility:document.visibilityState,hidden:document.hidden}})()',returnByValue:true}).then(result => result.result.value);
-const sample = async label => { const [state, audio, isolation] = await Promise.all([media(), fetch(`${host}/audio`).then(r=>r.json()), fetch(`${host}/isolation`).then(r=>r.json())]); const row={label,timestamp:new Date().toISOString(),target_id:page.id,media:state,audio,isolation}; console.log(JSON.stringify(row)); return row; };
+const sample = async label => { const [state, audio, isolation] = await Promise.all([media(), fetch(`${host}/audio`,{headers}).then(r=>r.json()), fetch(`${host}/isolation`,{headers}).then(r=>r.json())]); const row={label,timestamp:new Date().toISOString(),target_id:page.id,media:state,audio,isolation}; console.log(JSON.stringify(row)); return row; };
 const expect = (condition, label) => { if (!condition) throw new Error(`FAIL: ${label}`); console.log(`PASS: ${label}`); };
 
 await control({type:'navigate',url:'https://www.youtube.com/watch?v=dQw4w9WgXcQ'}); await wait(7000); page=(await pages()).find(target=>target.type==='page');
@@ -24,6 +26,6 @@ const resumed = await sample('resumed'); expect(!resumed.media?.paused && resume
 await command(page.webSocketDebuggerUrl, 'Runtime.evaluate', {expression:'(()=>{const m=document.querySelector("video");if(m)m.currentTime+=30})()'}); await wait(800);
 const seeked = await sample('seek'); expect(seeked.media.currentTime > resumed.media.currentTime + 20, 'seek +30s');
 await control({type:'screencast',enabled:false}); await wait(5000); const stopped = await sample('screencast_stopped');
-await control({type:'screencast',enabled:true}); const frame = await new Promise((resolve,reject)=>{const ws=new WebSocket('ws://127.0.0.1:8787/ws/frame');ws.binaryType='arraybuffer';ws.onmessage=e=>{ws.close();resolve(e.data.byteLength)};setTimeout(()=>reject(new Error('no frame after screencast restart')),5000)}); expect(frame > 0, 'frame recovery');
+await control({type:'screencast',enabled:true}); const frame = await new Promise((resolve,reject)=>{const ws=new WebSocket('ws://127.0.0.1:8787/ws/frame');ws.binaryType='arraybuffer';ws.onopen=()=>ws.send(JSON.stringify({type:'auth',token}));ws.onmessage=e=>{ws.close();resolve(e.data.byteLength)};setTimeout(()=>reject(new Error('no frame after screencast restart')),5000)}); expect(frame > 0, 'frame recovery');
 const browser = `${cdpBase}${browserPath}`; const tab = await command(browser, 'Target.createTarget', {url:'about:blank'}); await command(browser, 'Target.activateTarget', {targetId:tab.targetId}); await wait(500); await sample('other_tab_active'); await command(browser, 'Target.activateTarget', {targetId:page.id}); await wait(500); await sample('original_tab_restored');
 console.log('PASS: audio scenario complete');

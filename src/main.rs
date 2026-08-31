@@ -9,8 +9,9 @@ use axum::{
         State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
+    http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse},
-    routing::get,
+    routing::{get, post},
 };
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
@@ -37,6 +38,15 @@ struct App {
     active: Arc<Mutex<Cdp>>,
     frame_tx: watch::Sender<Vec<u8>>,
     frames: watch::Receiver<Vec<u8>>,
+    auth: Arc<Mutex<Auth>>,
+}
+struct Auth {
+    code: String,
+    token: Option<String>,
+}
+#[derive(Deserialize)]
+struct PairRequest {
+    code: String,
 }
 
 #[derive(Clone)]
@@ -94,6 +104,8 @@ async fn main() -> Result<()> {
     let port = launch_brave(&profile).await?;
     let target = page_target(port).await?;
     let active_id = Arc::new(Mutex::new(target.id.clone()));
+    let code = random_hex(3);
+    println!("HWMR pairing code: {code}");
     let (frame_tx, frames) = watch::channel(Vec::new());
     let cdp = Cdp::connect(
         target.websocket,
@@ -124,6 +136,7 @@ async fn main() -> Result<()> {
         active: Arc::new(Mutex::new(cdp)),
         frame_tx,
         frames,
+        auth: Arc::new(Mutex::new(Auth { code, token: None })),
     };
     let reconcile = app.clone();
     tokio::spawn(async move {
@@ -144,6 +157,7 @@ async fn main() -> Result<()> {
     let router = Router::new()
         .route("/", get(index))
         .route("/health", get(health))
+        .route("/pair", post(pair))
         .route("/audio", get(audio_status))
         .route("/isolation", get(isolation_status))
         .route("/tabs", get(tabs))
@@ -294,7 +308,37 @@ async fn index() -> Html<&'static str> {
 async fn health() -> impl IntoResponse {
     axum::Json(Status { status: "ok" })
 }
-async fn audio_status() -> impl IntoResponse {
+async fn pair(
+    State(app): State<App>,
+    axum::Json(request): axum::Json<PairRequest>,
+) -> impl IntoResponse {
+    let mut auth = app.auth.lock().await;
+    if request.code != auth.code {
+        return (
+            axum::http::StatusCode::UNAUTHORIZED,
+            axum::Json(json!({"ok":false,"error":"invalid_pairing_code"})),
+        )
+            .into_response();
+    }
+    let token = random_hex(32);
+    auth.code = random_hex(3);
+    auth.token = Some(token.clone());
+    axum::Json(json!({"ok":true,"token":token})).into_response()
+}
+async fn authorized(headers: &HeaderMap, app: &App) -> bool {
+    let Some(token) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+    else {
+        return false;
+    };
+    app.auth.lock().await.token.as_deref() == Some(token)
+}
+async fn audio_status(State(app): State<App>, headers: HeaderMap) -> impl IntoResponse {
+    if !authorized(&headers, &app).await {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
     match audio::sessions() {
         Ok(sessions) => axum::Json(serde_json::json!({"sessions": sessions})).into_response(),
         Err(error) => (
@@ -304,13 +348,20 @@ async fn audio_status() -> impl IntoResponse {
             .into_response(),
     }
 }
-async fn isolation_status() -> impl IntoResponse {
+async fn isolation_status(State(app): State<App>, headers: HeaderMap) -> impl IntoResponse {
+    if !authorized(&headers, &app).await {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
     let state = window_state();
     axum::Json(
         serde_json::json!({"foreground_window": state.0, "cursor": {"x": state.1, "y": state.2}}),
     )
+    .into_response()
 }
-async fn tabs(State(app): State<App>) -> impl IntoResponse {
+async fn tabs(State(app): State<App>, headers: HeaderMap) -> impl IntoResponse {
+    if !authorized(&headers, &app).await {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
     match page_targets(app.port).await {
         Ok(items) => {
             let active = app.active_id.lock().await.clone();
@@ -320,12 +371,40 @@ async fn tabs(State(app): State<App>) -> impl IntoResponse {
     }
 }
 async fn frame_ws(ws: WebSocketUpgrade, State(app): State<App>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| frames(socket, app.frames))
+    ws.on_upgrade(move |socket| frames(socket, app))
 }
 async fn control_ws(ws: WebSocketUpgrade, State(app): State<App>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| controls(socket, app))
 }
-async fn frames(mut socket: WebSocket, mut frames: watch::Receiver<Vec<u8>>) {
+#[derive(Deserialize)]
+struct WsAuth {
+    #[serde(rename = "type")]
+    kind: String,
+    token: String,
+}
+async fn authenticate(socket: &mut WebSocket, app: &App) -> bool {
+    let Some(Ok(Message::Text(text))) = socket.recv().await else {
+        return reject(socket).await;
+    };
+    let Ok(auth) = serde_json::from_str::<WsAuth>(&text) else {
+        return reject(socket).await;
+    };
+    if auth.kind == "auth" && app.auth.lock().await.token.as_deref() == Some(&auth.token) {
+        true
+    } else {
+        reject(socket).await
+    }
+}
+async fn reject(socket: &mut WebSocket) -> bool {
+    let _ = socket.send(Message::Close(None)).await;
+    let _ = socket.close().await;
+    false
+}
+async fn frames(mut socket: WebSocket, app: App) {
+    if !authenticate(&mut socket, &app).await {
+        return;
+    }
+    let mut frames = app.frames;
     while frames.changed().await.is_ok() {
         let frame = frames.borrow().clone();
         if socket.send(Message::Binary(frame.into())).await.is_err() {
@@ -366,6 +445,9 @@ async fn select_tab(app: &App, id: &str) -> Result<Value> {
     Ok(json!({"selected":id}))
 }
 async fn controls(mut socket: WebSocket, app: App) {
+    if !authenticate(&mut socket, &app).await {
+        return;
+    }
     while let Some(Ok(Message::Text(text))) = socket.recv().await {
         let before = window_state();
         let result = match serde_json::from_str::<Control>(&text) {
@@ -464,6 +546,11 @@ fn navigation_url(text: &str) -> String {
             url::form_urlencoded::byte_serialize(text.as_bytes()).collect::<String>()
         )
     }
+}
+fn random_hex(bytes: usize) -> String {
+    let mut value = vec![0; bytes];
+    getrandom::fill(&mut value).expect("OS random unavailable");
+    value.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(test)]
