@@ -70,6 +70,7 @@ enum Control {
     Reload,
     Navigate { url: String },
     Key { key: String },
+    Screencast { enabled: bool },
 }
 
 #[derive(Serialize)]
@@ -308,6 +309,10 @@ async fn controls(mut socket: WebSocket, cdp: Cdp) {
                     Err(error) => Err(error),
                 }
             }
+            Ok(Control::Screencast { enabled }) => cdp.command(
+                if enabled { "Page.startScreencast" } else { "Page.stopScreencast" },
+                if enabled { json!({"format":"jpeg", "quality":70, "maxWidth":430, "maxHeight":932, "everyNthFrame":1}) } else { json!({}) },
+            ).await,
             Err(error) => Err(error.into()),
         };
         let after = window_state();
