@@ -125,6 +125,22 @@ async fn main() -> Result<()> {
         frame_tx,
         frames,
     };
+    let reconcile = app.clone();
+    tokio::spawn(async move {
+        loop {
+            if let Ok(targets) = page_targets(reconcile.port).await {
+                let active = reconcile.active_id.lock().await.clone();
+                if !targets.iter().any(|target| target.id == active) {
+                    if let Some(target) = targets.first() {
+                        let _ = select_tab(&reconcile, &target.id).await;
+                    } else {
+                        *reconcile.active_id.lock().await = String::new();
+                    }
+                }
+            }
+            sleep(Duration::from_secs(1)).await;
+        }
+    });
     let router = Router::new()
         .route("/", get(index))
         .route("/health", get(health))
@@ -326,11 +342,12 @@ async fn select_tab(app: &App, id: &str) -> Result<Value> {
     if *app.active_id.lock().await == target.id {
         return Ok(json!({"already_active":true}));
     }
-    app.active
+    let _ = app
+        .active
         .lock()
         .await
         .command("Page.stopScreencast", json!({}))
-        .await?;
+        .await;
     let next = Cdp::connect(
         target.websocket,
         target.id.clone(),
