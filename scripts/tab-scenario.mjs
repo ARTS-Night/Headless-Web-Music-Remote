@@ -1,6 +1,6 @@
 const host='http://127.0.0.1:8787', wait=ms=>new Promise(r=>setTimeout(r,ms));
 const token=process.env.HWMR_TOKEN;if(!token)throw Error('set HWMR_TOKEN after pairing');const headers={authorization:`Bearer ${token}`};
-const [port,browserPath]=(await (await import('node:fs/promises')).readFile(`${process.env.LOCALAPPDATA}\\HWMR\\browser-profile\\DevToolsActivePort`,'utf8')).trim().split(/\r?\n/);
+const [port,browserPath]=(await (await import('node:fs/promises')).readFile(`${process.env.LOCALAPPDATA}\\HWMR\\browser-profile-v7\\DevToolsActivePort`,'utf8')).trim().split(/\r?\n/);
 const call=(url,method,params={})=>new Promise((resolve,reject)=>{const ws=new WebSocket(url);ws.onopen=()=>ws.send(JSON.stringify({id:1,method,params}));ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.id===1){ws.close();m.error?reject(m.error):resolve(m.result)}};ws.onerror=reject});
 const control=message=>new Promise((resolve,reject)=>{const ws=new WebSocket('ws://127.0.0.1:8787/ws/control');ws.onopen=()=>{ws.send(JSON.stringify({type:'auth',token}));ws.send(JSON.stringify(message))};ws.onmessage=e=>{ws.close();resolve(JSON.parse(e.data))};ws.onerror=reject});
 const tabs=()=>fetch(`${host}/tabs`,{headers}).then(r=>r.json());

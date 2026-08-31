@@ -30,6 +30,7 @@ use windows_sys::Win32::{
 
 const BRAVE: &str = r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe";
 const VIEWPORT: &str = "430,932";
+const CDP_PORT: u16 = 9229;
 
 #[derive(Clone)]
 struct App {
@@ -77,6 +78,12 @@ struct Target {
 }
 
 #[derive(Deserialize)]
+struct BrowserVersion {
+    #[serde(rename = "webSocketDebuggerUrl")]
+    websocket: String,
+}
+
+#[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Control {
     Tap { x: f64, y: f64 },
@@ -100,7 +107,9 @@ struct Status<'a> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let profile = std::env::var("LOCALAPPDATA").context("LOCALAPPDATA unavailable")?;
-    let profile = PathBuf::from(profile).join("HWMR").join("browser-profile");
+    let profile = PathBuf::from(profile)
+        .join("HWMR")
+        .join("browser-profile-v7");
     std::fs::create_dir_all(&profile)?;
     let port = launch_brave(&profile).await?;
     let target = page_target(port).await?;
@@ -115,7 +124,14 @@ async fn main() -> Result<()> {
         frame_tx.clone(),
     )
     .await?;
+    cdp.command("Page.navigate", json!({"url":"https://www.youtube.com/"}))
+        .await?;
     cdp.command("Page.enable", json!({})).await?;
+    cdp.command(
+        "Page.startScreencast",
+        json!({"format":"jpeg", "quality":70, "maxWidth":430, "maxHeight":932, "everyNthFrame":1}),
+    )
+    .await?;
     let visibility = cdp
         .command(
             "Runtime.evaluate",
@@ -126,11 +142,6 @@ async fn main() -> Result<()> {
         "Headless page visibility: {}",
         visibility["result"]["result"]["value"]
     );
-    cdp.command(
-        "Page.startScreencast",
-        json!({"format":"jpeg", "quality":70, "maxWidth":430, "maxHeight":932, "everyNthFrame":1}),
-    )
-    .await?;
     let app = App {
         port,
         active_id,
@@ -181,14 +192,19 @@ async fn launch_brave(profile: &PathBuf) -> Result<u16> {
             "Existing DevToolsActivePort found; profile may already be owned. Stop its Brave instance before starting HWMR"
         )
     }
+    let port_guard = std::net::TcpListener::bind(("127.0.0.1", CDP_PORT))
+        .with_context(|| format!("CDP loopback port {CDP_PORT} is already in use"))?;
+    drop(port_guard);
     Command::new(BRAVE)
         .args([
             "--headless",
             "--remote-debugging-address=127.0.0.1",
-            "--remote-debugging-port=0",
+            "--remote-debugging-port=9229",
+            "--no-first-run",
+            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
             &format!("--user-data-dir={}", profile.display()),
             &format!("--window-size={VIEWPORT}"),
-            "https://www.youtube.com/",
+            "about:blank",
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -199,6 +215,18 @@ async fn launch_brave(profile: &PathBuf) -> Result<u16> {
         if let Ok(value) = std::fs::read_to_string(&port_file) {
             if let Some(port) = value.lines().next().and_then(|line| line.parse().ok()) {
                 return Ok(port);
+            }
+        }
+        if let Ok(response) = reqwest::get(format!("http://127.0.0.1:{CDP_PORT}/json/list")).await {
+            if response.status().is_success() {
+                let version: BrowserVersion =
+                    reqwest::get(format!("http://127.0.0.1:{CDP_PORT}/json/version"))
+                        .await?
+                        .json()
+                        .await?;
+                let browser_path = url::Url::parse(&version.websocket)?.path().to_owned();
+                std::fs::write(&port_file, format!("{CDP_PORT}\n{browser_path}\n"))?;
+                return Ok(CDP_PORT);
             }
         }
         sleep(Duration::from_millis(250)).await;

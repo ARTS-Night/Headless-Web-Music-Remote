@@ -1,7 +1,7 @@
 const host = 'http://127.0.0.1:8787';
 const token = process.env.HWMR_TOKEN; if (!token) throw Error('set HWMR_TOKEN after pairing');
 const headers = {authorization:`Bearer ${token}`};
-const profile = `${process.env.LOCALAPPDATA}\\HWMR\\browser-profile\\DevToolsActivePort`;
+const profile = `${process.env.LOCALAPPDATA}\\HWMR\\browser-profile-v7\\DevToolsActivePort`;
 const [port, browserPath] = (await (await import('node:fs/promises')).readFile(profile, 'utf8')).trim().split(/\r?\n/);
 const cdpBase = `ws://127.0.0.1:${port}`;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));

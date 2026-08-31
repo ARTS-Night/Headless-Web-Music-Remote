@@ -1,5 +1,5 @@
 const token=process.env.HWMR_TOKEN;if(!token)throw Error('set HWMR_TOKEN after pairing');
-const profile=`${process.env.LOCALAPPDATA}\\HWMR\\browser-profile\\DevToolsActivePort`,[port]=(await (await import('node:fs/promises')).readFile(profile,'utf8')).trim().split(/\r?\n/),wait=ms=>new Promise(r=>setTimeout(r,ms));
+const profile=`${process.env.LOCALAPPDATA}\\HWMR\\browser-profile-v7\\DevToolsActivePort`,[port]=(await (await import('node:fs/promises')).readFile(profile,'utf8')).trim().split(/\r?\n/),wait=ms=>new Promise(r=>setTimeout(r,ms));
 const control=message=>new Promise((resolve,reject)=>{const ws=new WebSocket('ws://127.0.0.1:8787/ws/control');ws.onopen=()=>{ws.send(JSON.stringify({type:'auth',token}));ws.send(JSON.stringify(message))};ws.onmessage=e=>{ws.close();resolve(JSON.parse(e.data))};ws.onerror=reject});
 const pages=()=>fetch(`http://127.0.0.1:${port}/json/list`).then(r=>r.json());
 const cdp=(url,method,params={})=>new Promise((resolve,reject)=>{const ws=new WebSocket(url);ws.onopen=()=>ws.send(JSON.stringify({id:1,method,params}));ws.onmessage=e=>{const r=JSON.parse(e.data);if(r.id===1){ws.close();r.error?reject(r.error):resolve(r.result)}};ws.onerror=reject});
