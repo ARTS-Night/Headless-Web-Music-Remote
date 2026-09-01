@@ -1,11 +1,79 @@
-# Headless Web Music Remote
+# Headless Web Music Remote (HWMR)
 
-HWMR runs Headless Brave on Windows and forwards rendered web-music pixels to a phone over a trusted LAN. Phone controls travel through the local host to Chrome DevTools Protocol; Windows foreground and mouse input remain untouched, and audio stays on the PC.
+HWMR runs Brave headlessly on a Windows PC, keeps audio on that PC, and sends rendered JPEG frames plus controls to a phone on a trusted LAN. The phone never controls the Windows foreground window or mouse: every remote action goes through CDP to the dedicated headless Brave instance.
 
-## Start and pair
+## Requirements
 
-Run `cargo run --bin hwmr-host`, then open the printed viewer URL. The host prints a one-time pairing code; enter it in the client. A successful pairing stores a random in-memory session token in browser `localStorage`, so a page reload does not require pairing again. Restarting the host invalidates that token.
+- Windows 10 or later
+- [Brave](https://brave.com/download/) installed for the current machine
+- A phone and PC on the same trusted LAN
 
-## Security scope
+Node.js, npm, Vite, Rust, and a browser dev server are **not** needed to run the release executable.
 
-CDP is loopback-only and is never exposed to LAN clients. Browser data, diagnostics, controls, and frames require the session token after pairing. There is no HTTPS yet: use HWMR only on a trusted LAN and never expose it directly to the Internet.
+## Install and run
+
+1. Download `hwmr.exe` from the release package.
+2. Run `hwmr.exe`.
+3. On the phone, open the printed `Phone (trusted LAN)` URL.
+4. Enter the one-time pairing code printed by HWMR.
+
+The host prints its dedicated profile location, local URL, LAN URL when a private LAN address is detected, pairing code, and CDP binding. Pairing tokens exist only in host memory; restarting HWMR invalidates existing phone sessions.
+
+## Controls
+
+- Tap and swipe the rendered screen to control Brave.
+- Use the bottom bar for Back, tabs, play/pause, Reload, and Forward.
+- Use **URL or search** to navigate.
+- Tapping a remote text field opens the phone keyboard. ASCII, space, Backspace, and Enter are validated on the Android Emulator. Japanese Gboard on a physical device is still pending validation.
+
+## Audio behavior
+
+Audio always stays on the Windows PC speakers or headphones. The phone receives visuals and sends controls only.
+
+## Security model
+
+- Viewer HTTP/WebSocket listens on the PC network interfaces so a trusted-LAN phone can connect.
+- Pairing is mandatory; protected HTTP, control WebSocket, and frame WebSocket reject unauthenticated clients.
+- CDP is fixed to `127.0.0.1:9229` and is never exposed to LAN clients.
+- HWMR does not configure UPnP, port forwarding, or Internet exposure. Do not expose its viewer port to the Internet.
+- HWMR uses its own profile under `%LOCALAPPDATA%\HWMR\browser-profile-v7`; it never uses the normal Brave profile.
+
+## Configuration
+
+Defaults are deliberately small and stable:
+
+| Setting | Default | Override |
+| --- | --- | --- |
+| Viewer port | `8787` | `HWMR_HOST_PORT` |
+| CDP port | `9229` loopback-only | fixed |
+| JPEG quality | `60` | `HWMR_JPEG_QUALITY` (1–100) |
+| Frame cadence | every second frame | `HWMR_EVERY_NTH_FRAME` (>0) |
+| Viewport | `430x932` | fixed |
+| Brave executable | standard Windows locations | `HWMR_BRAVE_PATH` |
+| Dedicated profile | `%LOCALAPPDATA%\HWMR\browser-profile-v7` | `HWMR_PROFILE_DIR` |
+
+If Brave cannot be found, install it in the standard location or set `HWMR_BRAVE_PATH` to `brave.exe`. If startup reports an existing `DevToolsActivePort`, close the prior HWMR instance that owns its dedicated profile before retrying.
+
+## Development and build
+
+```powershell
+cargo test
+cargo build --release
+```
+
+The release artifact is `target\release\hwmr.exe`. The web client is compiled into the executable, so no sidecar asset directory is required.
+
+Runtime scenarios require a running HWMR host and its pairing token:
+
+```powershell
+node scripts/audio-scenario.mjs
+node scripts/tab-scenario.mjs
+node scripts/text-input-scenario.mjs
+```
+
+## Known limitations
+
+- This is for trusted LAN use, not Internet remote access.
+- Physical Android Japanese Gboard validation remains pending.
+- iPhone validation remains pending.
+- The transport is JPEG/WebSocket (`quality=60`, every second frame), not WebRTC or video streaming.

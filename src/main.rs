@@ -1,6 +1,13 @@
 mod audio;
 
-use std::{collections::HashMap, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    net::{Ipv4Addr, UdpSocket},
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{Context, Result, bail};
 use axum::{
@@ -28,9 +35,62 @@ use windows_sys::Win32::{
     UI::WindowsAndMessaging::{GetCursorPos, GetForegroundWindow},
 };
 
-const BRAVE: &str = r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe";
 const VIEWPORT: &str = "430,932";
 const CDP_PORT: u16 = 9229;
+
+fn host_port() -> u16 {
+    std::env::var("HWMR_HOST_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|port| *port != 0)
+        .unwrap_or(8787)
+}
+
+fn profile_dir() -> Result<PathBuf> {
+    let default = PathBuf::from(std::env::var("LOCALAPPDATA").context("LOCALAPPDATA unavailable")?)
+        .join("HWMR")
+        .join("browser-profile-v7");
+    Ok(std::env::var_os("HWMR_PROFILE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or(default))
+}
+
+fn brave_path() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("HWMR_BRAVE_PATH").map(PathBuf::from) {
+        if path.is_file() {
+            return Ok(path);
+        }
+        bail!("Brave not found at HWMR_BRAVE_PATH: {}", path.display());
+    }
+    let mut candidates = vec![PathBuf::from(
+        r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+    )];
+    if let Some(program_files) = std::env::var_os("ProgramFiles(x86)") {
+        candidates.push(
+            PathBuf::from(program_files)
+                .join("BraveSoftware\\Brave-Browser\\Application\\brave.exe"),
+        );
+    }
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        candidates.push(
+            PathBuf::from(local).join("BraveSoftware\\Brave-Browser\\Application\\brave.exe"),
+        );
+    }
+    candidates.into_iter().find(|path| path.is_file()).context(
+        "Brave was not found. Install Brave in the standard location or set HWMR_BRAVE_PATH.",
+    )
+}
+
+fn lan_address() -> Option<Ipv4Addr> {
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("1.1.1.1:80").ok()?;
+    match socket.local_addr().ok()?.ip() {
+        std::net::IpAddr::V4(address) if address.is_private() || address.is_link_local() => {
+            Some(address)
+        }
+        _ => None,
+    }
+}
 
 fn screencast_params() -> Value {
     let quality = std::env::var("HWMR_JPEG_QUALITY")
@@ -120,16 +180,13 @@ struct Status<'a> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let profile = std::env::var("LOCALAPPDATA").context("LOCALAPPDATA unavailable")?;
-    let profile = PathBuf::from(profile)
-        .join("HWMR")
-        .join("browser-profile-v7");
+    let profile = profile_dir()?;
     std::fs::create_dir_all(&profile)?;
-    let port = launch_brave(&profile).await?;
+    let brave = brave_path()?;
+    let port = launch_brave(&brave, &profile).await?;
     let target = page_target(port).await?;
     let active_id = Arc::new(Mutex::new(target.id.clone()));
     let code = random_hex(3);
-    println!("HWMR pairing code: {code}");
     let (frame_tx, frames) = watch::channel(Vec::new());
     let cdp = Cdp::connect(
         target.websocket,
@@ -159,7 +216,10 @@ async fn main() -> Result<()> {
         active: Arc::new(Mutex::new(cdp)),
         frame_tx,
         frames,
-        auth: Arc::new(Mutex::new(Auth { code, token: None })),
+        auth: Arc::new(Mutex::new(Auth {
+            code: code.clone(),
+            token: None,
+        })),
     };
     let reconcile = app.clone();
     tokio::spawn(async move {
@@ -187,16 +247,25 @@ async fn main() -> Result<()> {
         .route("/ws/frame", get(frame_ws))
         .route("/ws/control", get(control_ws))
         .with_state(app);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:8787").await?;
-    println!("HWMR viewer: http://127.0.0.1:8787  (CDP: 127.0.0.1:{port})");
+    let host_port = host_port();
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", host_port)).await?;
+    println!(
+        "HWMR started\nProfile: {}\nLocal: http://127.0.0.1:{host_port}",
+        profile.display()
+    );
+    if let Some(address) = lan_address() {
+        println!("Phone (trusted LAN): http://{address}:{host_port}");
+    } else {
+        println!(
+            "Phone: no private LAN address detected; use this PC's trusted-LAN IPv4 address and port {host_port}"
+        );
+    }
+    println!("Pairing code: {code}\nCDP: 127.0.0.1:{port} (loopback only)");
     axum::serve(listener, router).await?;
     Ok(())
 }
 
-async fn launch_brave(profile: &PathBuf) -> Result<u16> {
-    if !std::path::Path::new(BRAVE).exists() {
-        bail!("Brave not found at {BRAVE}");
-    }
+async fn launch_brave(brave: &Path, profile: &Path) -> Result<u16> {
     let port_file = profile.join("DevToolsActivePort");
     if port_file.exists() {
         bail!(
@@ -206,7 +275,7 @@ async fn launch_brave(profile: &PathBuf) -> Result<u16> {
     let port_guard = std::net::TcpListener::bind(("127.0.0.1", CDP_PORT))
         .with_context(|| format!("CDP loopback port {CDP_PORT} is already in use"))?;
     drop(port_guard);
-    Command::new(BRAVE)
+    Command::new(brave)
         .args([
             "--headless",
             "--remote-debugging-address=127.0.0.1",
