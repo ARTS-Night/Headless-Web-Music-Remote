@@ -25,6 +25,13 @@ pairing codes, session tokens, LAN addresses, local paths, or device IDs.
 - `git diff --check`: passed.
 - `cargo fmt --check`: **failed**. The committed Rust code needs formatting.
 
+## Follow-up resolution
+
+The formatting failure, QR payload validation, status documentation, and
+third-party notice were corrected on `pwa-next`. The Host now also prints a
+fresh QR at normal startup; `--show-qr` remains as a refresh command. Physical
+device validation and dedicated QR lifecycle tests remain follow-up work.
+
 ## Fix before physical-device validation
 
 ### 1. Validate QR connection payloads before network access — high priority

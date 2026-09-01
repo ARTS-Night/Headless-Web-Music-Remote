@@ -76,6 +76,8 @@ that ports all features from the stable embedded `web/index.html`:
 - Service Worker registration (static shell only).
 - QR scanner uses the locally bundled jsQR 1.4.0 library; camera streams are
   stopped on success, cancel, and permission failure.
+- Rust Host prints a fresh terminal QR at normal startup; `--show-qr` remains
+  available for refreshing it from another shell.
 - QR payloads accept only HWMR version 1, private IPv4 Host addresses, valid
   ports, and the expected one-time nonce format.
 

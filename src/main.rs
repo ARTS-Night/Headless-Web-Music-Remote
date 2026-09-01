@@ -341,7 +341,7 @@ async fn main() -> Result<()> {
                 .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]),
         )
         .layer(middleware::from_fn(local_network_access_header))
-        .with_state(app);
+        .with_state(app.clone());
     let host_port = host_port();
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", host_port)).await?;
     println!(
@@ -356,8 +356,12 @@ async fn main() -> Result<()> {
         );
     }
     println!(
-        "Pairing code: {code}\nQR pairing: run hwmr.exe --show-qr from another shell\nCDP: 127.0.0.1:{port} (loopback only)"
+        "Pairing code: {code}\nQR pairing: printed below (expires in 2 minutes)\nCDP: 127.0.0.1:{port} (loopback only)"
     );
+    match issue_qr(&app).await {
+        Ok(qr) => println!("QR pairing (expires in 2 minutes):\n{qr}"),
+        Err(error) => println!("QR pairing unavailable: {error}"),
+    }
     axum::serve(
         listener,
         router.into_make_service_with_connect_info::<SocketAddr>(),
@@ -556,16 +560,9 @@ async fn show_qr() -> Result<()> {
     println!("{qr}\nScan this QR with your phone. It expires in 2 minutes.");
     Ok(())
 }
-async fn qr_pair(
-    ConnectInfo(client): ConnectInfo<SocketAddr>,
-    State(app): State<App>,
-) -> impl IntoResponse {
-    if !client.ip().is_loopback() {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    let Some(address) = lan_address() else {
-        return (StatusCode::BAD_REQUEST, "No trusted LAN address detected").into_response();
-    };
+
+async fn issue_qr(app: &App) -> Result<String> {
+    let address = lan_address().context("no trusted LAN address detected")?;
     let nonce = random_hex(16);
     let payload = json!({
         "v": 1,
@@ -573,18 +570,26 @@ async fn qr_pair(
         "port": host_port(),
         "nonce": nonce.clone()
     });
-    let qr = match qr_text(&payload.to_string()) {
-        Ok(qr) => qr,
-        Err(error) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
-        }
-    };
+    let qr = qr_text(&payload.to_string())?;
     let mut auth = app.auth.lock().await;
     auth.qr_nonce = Some(QrNonce {
         nonce,
         expires_at: Instant::now() + Duration::from_secs(120),
     });
-    axum::Json(json!({"ok": true, "qr": qr})).into_response()
+    Ok(qr)
+}
+
+async fn qr_pair(
+    ConnectInfo(client): ConnectInfo<SocketAddr>,
+    State(app): State<App>,
+) -> impl IntoResponse {
+    if !client.ip().is_loopback() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    match issue_qr(&app).await {
+        Ok(qr) => axum::Json(json!({"ok": true, "qr": qr})).into_response(),
+        Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+    }
 }
 
 async fn pair(
