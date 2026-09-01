@@ -532,14 +532,14 @@ fn qr_text(payload: &str) -> Result<String> {
         .map_err(|_| anyhow::anyhow!("QR payload is too large"))?;
     let size = qr.size();
     let mut text = String::new();
-    for y in -2..size + 2 {
-        let row: String = (-2..size + 2)
+    // Terminals normally use a black background, so render dark modules as
+    // spaces and light modules as blocks. Four modules of quiet zone are
+    // required by QR readers.
+    for y in -4..size + 4 {
+        let row: String = (-4..size + 4)
             .map(|x| {
-                if x >= 0 && y >= 0 && x < size && y < size && qr.get_module(x, y) {
-                    "██"
-                } else {
-                    "  "
-                }
+                let dark = x >= 0 && y >= 0 && x < size && y < size && qr.get_module(x, y);
+                if dark { "  " } else { "██" }
             })
             .collect();
         text.push_str(&row);
