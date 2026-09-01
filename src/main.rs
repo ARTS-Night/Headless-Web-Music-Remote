@@ -88,6 +88,10 @@ fn host_port() -> u16 {
         .unwrap_or(8787)
 }
 
+fn device_metrics(width: u32, height: u32) -> Value {
+    json!({"width":width.clamp(1, 1920),"height":height.clamp(1, 2400),"deviceScaleFactor":1,"mobile":false})
+}
+
 fn profile_dir() -> Result<PathBuf> {
     let default = PathBuf::from(std::env::var("LOCALAPPDATA").context("LOCALAPPDATA unavailable")?)
         .join("HWMR")
@@ -134,7 +138,7 @@ fn lan_address() -> Option<Ipv4Addr> {
     }
 }
 
-fn screencast_params() -> Value {
+fn screencast_params(width: u32, height: u32) -> Value {
     let quality = std::env::var("HWMR_JPEG_QUALITY")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -145,7 +149,7 @@ fn screencast_params() -> Value {
         .and_then(|v| v.parse().ok())
         .filter(|v| *v > 0)
         .unwrap_or(2);
-    json!({"format":"jpeg", "quality":quality, "maxWidth":430, "maxHeight":932, "everyNthFrame":every_nth})
+    json!({"format":"jpeg", "quality":quality, "maxWidth":width.clamp(1, 1920), "maxHeight":height.clamp(1, 2400), "everyNthFrame":every_nth})
 }
 
 #[derive(Clone)]
@@ -204,6 +208,7 @@ struct BrowserVersion {
 enum Control {
     Tap { x: f64, y: f64 },
     Scroll { x: f64, y: f64, delta_y: f64 },
+    Resize { width: u32, height: u32 },
     Back,
     Forward,
     Reload,
@@ -240,7 +245,7 @@ async fn main() -> Result<()> {
     cdp.command("Page.navigate", json!({"url":"https://www.youtube.com/"}))
         .await?;
     cdp.command("Page.enable", json!({})).await?;
-    cdp.command("Page.startScreencast", screencast_params())
+    cdp.command("Page.startScreencast", screencast_params(430, 932))
         .await?;
     let visibility = cdp
         .command(
@@ -429,7 +434,7 @@ impl Cdp {
         });
         cdp.command(
             "Emulation.setDeviceMetricsOverride",
-            json!({"width":430,"height":932,"deviceScaleFactor":1,"mobile":false}),
+            device_metrics(430, 932),
         )
         .await?;
         Ok(cdp)
@@ -597,7 +602,7 @@ async fn select_tab(app: &App, id: &str) -> Result<Value> {
     .await?;
     next.command("Page.enable", json!({})).await?;
     *app.active_id.lock().await = target.id;
-    next.command("Page.startScreencast", screencast_params())
+    next.command("Page.startScreencast", screencast_params(430, 932))
         .await?;
     *app.active.lock().await = next;
     Ok(json!({"selected":id}))
@@ -637,6 +642,25 @@ async fn controls(mut socket: WebSocket, app: App) {
                         )
                         .await
                     }
+                    Ok(Control::Resize { width, height }) => {
+                        let _ = cdp.command("Page.stopScreencast", json!({})).await;
+                        match cdp
+                            .command(
+                                "Emulation.setDeviceMetricsOverride",
+                                device_metrics(width, height),
+                            )
+                            .await
+                        {
+                            Ok(_) => {
+                                cdp.command(
+                                    "Page.startScreencast",
+                                    screencast_params(width, height),
+                                )
+                                .await
+                            }
+                            Err(error) => Err(error),
+                        }
+                    }
                     Ok(Control::Back) => cdp.command("Page.goBack", json!({})).await,
                     Ok(Control::Forward) => cdp.command("Page.goForward", json!({})).await,
                     Ok(Control::Reload) => cdp.command("Page.reload", json!({})).await,
@@ -674,7 +698,7 @@ async fn controls(mut socket: WebSocket, app: App) {
                                 "Page.stopScreencast"
                             },
                             if enabled {
-                                screencast_params()
+                                screencast_params(430, 932)
                             } else {
                                 json!({})
                             },

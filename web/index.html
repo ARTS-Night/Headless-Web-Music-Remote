@@ -1,8 +1,73 @@
 <!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>HWMR</title>
-<style>html,body{margin:0;background:#111;color:#eee;font:14px system-ui;height:100%;height:100dvh;overflow:hidden}[hidden]{display:none!important}#app{box-sizing:border-box;display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:8px;height:100dvh;padding:max(12px,env(safe-area-inset-top)) 12px max(12px,env(safe-area-inset-bottom))}#viewer{min-width:0;min-height:0;display:grid;place-items:center;overflow:hidden;background:#000;border-radius:12px;touch-action:none}#screen{display:block;max-width:100%;max-height:100%;width:auto;height:auto}#bar,#go{display:flex;gap:8px;justify-content:center}#go input{flex:1;min-width:0}input,button{box-sizing:border-box;border:0;border-radius:18px;padding:9px 13px;background:#292929;color:#fff}input{width:min(65vw,320px)}#pair{position:fixed;inset:0;display:grid;place-content:center;gap:10px;text-align:center;z-index:1}#pair input{width:220px}#pair-error{color:#ff8b8b}#text{position:fixed;top:-9999px;left:-9999px;opacity:0;pointer-events:none}</style>
-<div id="pair"><h1>HWMR</h1><form><input autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="6" placeholder="Pairing code" aria-label="Pairing code"><button>Pair</button></form><span id="pair-error"></span></div><main id="app" hidden><form id="go"><input placeholder="URL or search" aria-label="URL or search"><button>Go</button></form><div id="viewer"><img id="screen" alt="Remote Brave screen"><textarea id="text" aria-label="Remote text input"></textarea></div><div id="bar"><button data-action="back">←</button><button id="tabs">▢</button><button data-key="Space">▶</button><button data-action="reload">↻</button><button data-action="forward">→</button></div></main>
+<style>
+html,body{margin:0;background:#111;color:#eee;font:14px system-ui;height:100%;height:100dvh;overflow:hidden}
+[hidden]{display:none!important}
+#app{box-sizing:border-box;display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:8px;height:100dvh;padding:max(12px,env(safe-area-inset-top)) 12px max(12px,env(safe-area-inset-bottom))}
+#viewer{min-width:0;min-height:0;overflow:hidden;background:#000;border-radius:12px;touch-action:none}
+#screen{display:block;width:100%;height:100%;object-fit:fill}
+#bar,#go{display:flex;gap:8px;justify-content:center}
+#go input{flex:1;min-width:0}
+input,button{box-sizing:border-box;border:0;border-radius:18px;padding:9px 13px;background:#292929;color:#fff}
+input{width:min(65vw,320px)}
+#pair{position:fixed;inset:0;display:grid;place-content:center;gap:10px;text-align:center;z-index:1}
+#pair input{width:220px}#pair-error{color:#ff8b8b}
+#text{position:fixed;top:-9999px;left:-9999px;opacity:0;pointer-events:none}
+</style>
+<div id="pair"><h1>HWMR</h1><form><input autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="6" placeholder="Pairing code" aria-label="Pairing code"><button>Pair</button></form><span id="pair-error"></span></div>
+<main id="app" hidden>
+  <form id="go"><input placeholder="URL or search" aria-label="URL or search"><button>Go</button></form>
+  <div id="viewer"><img id="screen" alt="Remote Brave screen"><textarea id="text" aria-label="Remote text input"></textarea></div>
+  <div id="bar"><button data-action="back">←</button><button id="tabs">▢</button><button data-key="Space">▶</button><button data-action="reload">↻</button><button data-action="forward">→</button></div>
+</main>
 <script>
-const app=document.querySelector('#app'),image=document.querySelector('#screen'),pair=document.querySelector('#pair'),error=document.querySelector('#pair-error'),text=document.querySelector('#text');let control,frames,token=localStorage.hwmrToken,composing=false,composed='',touch,moved=false;const auth=ws=>ws.send(JSON.stringify({type:'auth',token})),send=value=>control?.send(JSON.stringify(value));const expired=()=>{localStorage.removeItem('hwmrToken');token='';pair.hidden=false;app.hidden=true;error.textContent='Session expired. Pair again.'};function start(){if(!token)return;pair.hidden=true;app.hidden=false;control=new WebSocket(`ws://${location.host}/ws/control`);frames=new WebSocket(`ws://${location.host}/ws/frame`);frames.binaryType='blob';control.onopen=()=>auth(control);frames.onopen=()=>auth(frames);control.onclose=expired;frames.onclose=expired;control.onmessage=e=>{const r=JSON.parse(e.data);if(r.ok&&r.result?.text_input)text.focus()};frames.onmessage=e=>{const old=image.src;image.src=URL.createObjectURL(e.data);if(old)URL.revokeObjectURL(old)}}document.querySelector('#pair form').onsubmit=async e=>{e.preventDefault();const code=e.currentTarget.querySelector('input').value.trim();const r=await fetch('/pair',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code})});if(!r.ok){error.textContent='Incorrect pairing code';return}token=(await r.json()).token;localStorage.hwmrToken=token;start()};function point(e){const r=image.getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;return{x:x*(image.naturalWidth||430),y:y*(image.naturalHeight||932)}}image.onclick=e=>{if(!moved)send({type:'tap',...point(e)});moved=false};image.onwheel=e=>{e.preventDefault();send({type:'scroll',...point(e),delta_y:e.deltaY})};text.oncompositionstart=()=>composing=true;text.oncompositionupdate=()=>{};text.oncompositionend=e=>{composing=false;composed=e.data;send({type:'insert_text',text:e.data});text.value=''};text.oninput=e=>{if(!composing&&e.data){if(e.data!==composed)send({type:'insert_text',text:e.data});composed='';text.value=''}};text.onkeydown=e=>{if(['Backspace','Enter','ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();send({type:'key',key:e.key});text.value=''}};document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>send({type:b.dataset.action}));document.querySelector('[data-key]').onclick=e=>send({type:'key',key:e.currentTarget.dataset.key});document.querySelector('#go').onsubmit=e=>{e.preventDefault();const field=e.currentTarget.querySelector('input'),value=field.value.trim();field.blur();if(value)send({type:'go',text:value})};document.querySelector('#tabs').onclick=async()=>{const r=await fetch('/tabs',{headers:{authorization:`Bearer ${token}`}});if(r.status===401)return expired();const tabs=await r.json(),pick=prompt(tabs.items.map((t,i)=>`${i+1}. ${t.active?'▶ ':''}${t.title||t.url}`).join('\n')),tab=tabs.items[Number(pick)-1];if(tab)send({type:'select_tab',id:tab.id})};image.addEventListener('touchstart',e=>{touch=e.touches[0];moved=false},{passive:true});image.addEventListener('touchmove',e=>{if(!touch)return;const next=e.touches[0];if(Math.abs(touch.clientX-next.clientX)+Math.abs(touch.clientY-next.clientY)>3)moved=true;send({type:'scroll',...point(next),delta_y:touch.clientY-next.clientY});touch=next;e.preventDefault()},{passive:false});image.addEventListener('touchend',()=>{touch=undefined});start();
+const app=document.querySelector('#app'),viewer=document.querySelector('#viewer'),image=document.querySelector('#screen'),pair=document.querySelector('#pair'),error=document.querySelector('#pair-error'),text=document.querySelector('#text');
+let control,frames,token=localStorage.hwmrToken,composing=false,composed='',touch,moved=false,viewport='';
+const auth=ws=>ws.send(JSON.stringify({type:'auth',token}));
+const send=value=>control?.send(JSON.stringify(value));
+const fit=()=>{
+  const r=viewer.getBoundingClientRect(),width=Math.round(r.width),height=Math.round(r.height),next=`${width}x${height}`;
+  if(width&&height&&next!==viewport&&control?.readyState===WebSocket.OPEN){viewport=next;send({type:'resize',width,height})}
+};
+new ResizeObserver(fit).observe(viewer);
+const expired=()=>{localStorage.removeItem('hwmrToken');token='';pair.hidden=false;app.hidden=true;error.textContent='Session expired. Pair again.'};
+function start(){
+  if(!token)return;
+  pair.hidden=true;app.hidden=false;
+  control=new WebSocket(`ws://${location.host}/ws/control`);
+  frames=new WebSocket(`ws://${location.host}/ws/frame`);frames.binaryType='blob';
+  control.onopen=()=>{auth(control);fit()};frames.onopen=()=>auth(frames);
+  control.onclose=expired;frames.onclose=expired;
+  control.onmessage=e=>{const r=JSON.parse(e.data);if(r.ok&&r.result?.text_input)text.focus()};
+  frames.onmessage=e=>{const old=image.src;image.src=URL.createObjectURL(e.data);if(old)URL.revokeObjectURL(old)};
+}
+document.querySelector('#pair form').onsubmit=async e=>{
+  e.preventDefault();const code=e.currentTarget.querySelector('input').value.trim();
+  const r=await fetch('/pair',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code})});
+  if(!r.ok){error.textContent='Incorrect pairing code';return}
+  token=(await r.json()).token;localStorage.hwmrToken=token;start();
+};
+function point(e){
+  const r=image.getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;
+  return{x:x*(image.naturalWidth||430),y:y*(image.naturalHeight||932)};
+}
+image.onclick=e=>{if(!moved)send({type:'tap',...point(e)});moved=false};
+image.onwheel=e=>{e.preventDefault();send({type:'scroll',...point(e),delta_y:e.deltaY})};
+text.oncompositionstart=()=>composing=true;
+text.oncompositionend=e=>{composing=false;composed=e.data;send({type:'insert_text',text:e.data});text.value=''};
+text.oninput=e=>{if(!composing&&e.data){if(e.data!==composed)send({type:'insert_text',text:e.data});composed='';text.value=''}};
+text.onkeydown=e=>{if(['Backspace','Enter','ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();send({type:'key',key:e.key});text.value=''}};
+document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>send({type:b.dataset.action}));
+document.querySelector('[data-key]').onclick=e=>send({type:'key',key:e.currentTarget.dataset.key});
+document.querySelector('#go').onsubmit=e=>{e.preventDefault();const field=e.currentTarget.querySelector('input'),value=field.value.trim();field.blur();if(value)send({type:'go',text:value})};
+document.querySelector('#tabs').onclick=async()=>{
+  const r=await fetch('/tabs',{headers:{authorization:`Bearer ${token}`}});if(r.status===401)return expired();
+  const tabs=await r.json(),pick=prompt(tabs.items.map((t,i)=>`${i+1}. ${t.active?'▶ ':''}${t.title||t.url}`).join('\n')),tab=tabs.items[Number(pick)-1];
+  if(tab)send({type:'select_tab',id:tab.id});
+};
+image.addEventListener('touchstart',e=>{touch=e.touches[0];moved=false},{passive:true});
+image.addEventListener('touchmove',e=>{if(!touch)return;const next=e.touches[0];if(Math.abs(touch.clientX-next.clientX)+Math.abs(touch.clientY-next.clientY)>3)moved=true;send({type:'scroll',...point(next),delta_y:touch.clientY-next.clientY});touch=next;e.preventDefault()},{passive:false});
+image.addEventListener('touchend',()=>{touch=undefined});
+start();
 </script>
