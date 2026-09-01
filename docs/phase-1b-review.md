@@ -87,6 +87,6 @@ introduced.
 
 ## Working tree note
 
-An untracked `patch.py` exists at review time. It is not part of `b4806d7` and
-was intentionally not deleted or committed. Review its ownership before any
-cleanup commit.
+The untracked `patch.py` found during review was an editing helper, not a
+product file. It has since been removed from the working tree and is not part
+of the finalized branch.
