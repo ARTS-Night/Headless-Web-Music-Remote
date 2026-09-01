@@ -3,12 +3,12 @@ mod audio;
 use std::{
     collections::HashMap,
     ffi::c_void,
-    net::{Ipv4Addr, UdpSocket},
+    net::{Ipv4Addr, SocketAddr, UdpSocket},
     os::windows::io::AsRawHandle,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, bail};
@@ -16,7 +16,7 @@ use axum::{
     Router,
     body::Body,
     extract::{
-        State, WebSocketUpgrade,
+        ConnectInfo, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header},
@@ -26,6 +26,7 @@ use axum::{
 };
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
+use qrcodegen::{QrCode, QrCodeEcc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{
@@ -191,10 +192,16 @@ struct App {
 struct Auth {
     code: String,
     token: Option<String>,
+    qr_nonce: Option<QrNonce>,
+}
+struct QrNonce {
+    nonce: String,
+    expires_at: Instant,
 }
 #[derive(Deserialize)]
 struct PairRequest {
-    code: String,
+    code: Option<String>,
+    nonce: Option<String>,
 }
 
 #[derive(Clone)]
@@ -254,6 +261,9 @@ struct Status<'a> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if std::env::args().skip(1).any(|arg| arg == "--show-qr") {
+        return show_qr().await;
+    }
     let profile = profile_dir()?;
     std::fs::create_dir_all(&profile)?;
     let brave = brave_path()?;
@@ -294,6 +304,7 @@ async fn main() -> Result<()> {
         auth: Arc::new(Mutex::new(Auth {
             code: code.clone(),
             token: None,
+            qr_nonce: None,
         })),
     };
     let reconcile = app.clone();
@@ -316,6 +327,7 @@ async fn main() -> Result<()> {
         .route("/", get(index))
         .route("/health", get(health))
         .route("/pair", post(pair))
+        .route("/pair/qr", post(qr_pair))
         .route("/logout", post(logout))
         .route("/audio", get(audio_status))
         .route("/isolation", get(isolation_status))
@@ -343,8 +355,8 @@ async fn main() -> Result<()> {
             "Phone: no private LAN address detected; use this PC's trusted-LAN IPv4 address and port {host_port}"
         );
     }
-    println!("Pairing code: {code}\nCDP: 127.0.0.1:{port} (loopback only)");
-    axum::serve(listener, router).await?;
+    println!("Pairing code: {code}\nQR pairing: run hwmr.exe --show-qr from another shell\nCDP: 127.0.0.1:{port} (loopback only)");
+    axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>()).await?;
     Ok(())
 }
 
@@ -505,12 +517,83 @@ async fn index() -> Html<&'static str> {
 async fn health() -> impl IntoResponse {
     axum::Json(Status { status: "ok" })
 }
+fn qr_text(payload: &str) -> Result<String> {
+    let qr = QrCode::encode_text(payload, QrCodeEcc::Medium)
+        .map_err(|_| anyhow::anyhow!("QR payload is too large"))?;
+    let size = qr.size();
+    let mut text = String::new();
+    for y in -2..size + 2 {
+        let row: String = (-2..size + 2)
+            .map(|x| {
+                if x >= 0 && y >= 0 && x < size && y < size && qr.get_module(x, y) {
+                    "██"
+                } else {
+                    "  "
+                }
+            })
+            .collect();
+        text.push_str(&row);
+        text.push('\n');
+    }
+    Ok(text)
+}
+async fn show_qr() -> Result<()> {
+    let response = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{}/pair/qr", host_port()))
+        .send()
+        .await
+        .context("request QR pairing from HWMR")?
+        .error_for_status()
+        .context("start HWMR first, then run hwmr.exe --show-qr")?;
+    let body = response.json::<Value>().await?;
+    let qr = body["qr"].as_str().context("HWMR returned no QR code")?;
+    println!("{qr}\nScan this QR with your phone. It expires in 2 minutes.");
+    Ok(())
+}
+async fn qr_pair(
+    ConnectInfo(client): ConnectInfo<SocketAddr>,
+    State(app): State<App>,
+) -> impl IntoResponse {
+    if !client.ip().is_loopback() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(address) = lan_address() else {
+        return (StatusCode::BAD_REQUEST, "No trusted LAN address detected").into_response();
+    };
+    let nonce = random_hex(16);
+    let payload = json!({
+        "v": 1,
+        "host": address.to_string(),
+        "port": host_port(),
+        "nonce": nonce.clone()
+    });
+    let qr = match qr_text(&payload.to_string()) {
+        Ok(qr) => qr,
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
+    };
+    let mut auth = app.auth.lock().await;
+    auth.qr_nonce = Some(QrNonce {
+        nonce,
+        expires_at: Instant::now() + Duration::from_secs(120),
+    });
+    axum::Json(json!({"ok": true, "qr": qr})).into_response()
+}
+
 async fn pair(
     State(app): State<App>,
     axum::Json(request): axum::Json<PairRequest>,
 ) -> impl IntoResponse {
     let mut auth = app.auth.lock().await;
-    if request.code != auth.code {
+    let valid_code = request.code.as_deref() == Some(&auth.code);
+    let valid_nonce = if let Some(nonce) = &request.nonce {
+        auth.qr_nonce.as_ref().is_some_and(|qn| &qn.nonce == nonce && qn.expires_at > Instant::now())
+    } else {
+        false
+    };
+
+    if !valid_code && !valid_nonce {
         return (
             axum::http::StatusCode::UNAUTHORIZED,
             axum::Json(json!({"ok":false,"error":"invalid_pairing_code"})),
@@ -520,6 +603,7 @@ async fn pair(
     let token = random_hex(32);
     auth.code = random_hex(3);
     auth.token = Some(token.clone());
+    auth.qr_nonce = None;
     axum::Json(json!({"ok":true,"token":token})).into_response()
 }
 async fn logout(State(app): State<App>, headers: HeaderMap) -> impl IntoResponse {
@@ -529,6 +613,7 @@ async fn logout(State(app): State<App>, headers: HeaderMap) -> impl IntoResponse
     let mut auth = app.auth.lock().await;
     auth.code = random_hex(3);
     auth.token = None;
+    auth.qr_nonce = None;
     println!("Logged out. New pairing code: {}", auth.code);
     axum::Json(json!({"ok": true})).into_response()
 }
@@ -888,7 +973,14 @@ fn random_hex(bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{device_metrics, navigation_url};
+    use super::*;
+
+    #[test]
+    fn qr_text_generation() {
+        let text = super::qr_text("http://example.com").unwrap();
+        assert!(text.contains("██"));
+        assert!(text.lines().count() > 10);
+    }
     #[test]
     fn url_or_search() {
         assert_eq!(navigation_url("https://example.com"), "https://example.com");

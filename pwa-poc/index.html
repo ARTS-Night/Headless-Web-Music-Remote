@@ -40,6 +40,8 @@ button:active{opacity:.75}
   <h1>HWMR</h1>
   <div id="connect-form">
     <div id="connect-last" hidden></div>
+    <button id="btn-scan" type="button" style="background:#5b9cff; color:#111; margin-bottom:12px;">Scan QR</button>
+    <div style="font-size:13px; color:#888; margin-bottom:12px;">or</div>
     <label for="f-host">Host IP</label>
     <input id="f-host" inputmode="decimal" placeholder="192.168.1.100" autocomplete="off">
     <label for="f-port">Port</label>
@@ -52,6 +54,18 @@ button:active{opacity:.75}
     <p id="connect-error"></p>
   </div>
 </div>
+
+<!-- QR Scanner -->
+<div id="qr-scanner" hidden style="position:fixed; inset:0; background:#111; z-index:20; display:flex; flex-direction:column; padding:max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom)); box-sizing:border-box;">
+  <h2 style="margin:0 0 16px;">Scan HWMR QR</h2>
+  <div style="flex:1; display:flex; justify-content:center; align-items:center; background:#000; border-radius:12px; overflow:hidden; position:relative;">
+    <video id="qr-video" playsinline muted style="width:100%; height:100%; object-fit:cover;"></video>
+  </div>
+  <p style="text-align:center; margin:16px 0;">Point your camera at the QR shown by HWMR on your PC.</p>
+  <button id="btn-cancel-scan" type="button" style="margin-top:auto;">Cancel</button>
+</div>
+
+<script src="jsQR.min.js"></script>
 
 <!-- Main viewer app (hidden until paired) -->
 <main id="app" hidden>
@@ -85,8 +99,15 @@ const image       = document.querySelector('#screen');
 const text        = document.querySelector('#text');
 const tabList     = document.querySelector('#tab-list');
 
+const qrScanner   = document.querySelector('#qr-scanner');
+const qrVideo     = document.querySelector('#qr-video');
+const btnScan     = document.querySelector('#btn-scan');
+const btnCancelScan = document.querySelector('#btn-cancel-scan');
+
 // ── State ─────────────────────────────────────────────────────────────────────
 let token        = '';   // in-memory only; never persisted
+let qrStream     = null;
+let qrAnimationFrame = null;
 let control, frames;
 let composing    = false;
 let composed     = '';
@@ -147,7 +168,7 @@ function showConnect(message) {
   fCode.focus();
 }
 
-function expired() { showConnect('Session expired. Pair again.'); }
+function expired() { showConnect('Connection lost or session expired.\nYou can reconnect or change the PC address.'); }
 
 // ── Open main viewer after successful auth ─────────────────────────────────────
 function startViewer() {
@@ -175,7 +196,53 @@ function startViewer() {
   };
 }
 
-// ── Connect / Pair flow ────────────────────────────────────────────────────────
+async function doConnect(host, port, payload) {
+  currentBase = `http://${host}:${port}`;
+  btnConnect.disabled = true;
+  btnConnect.textContent = 'Connecting…';
+
+  try {
+    let health;
+    try {
+      health = await lanFetch('/health');
+    } catch (e) {
+      if (e.name === 'TypeError' || e.message.includes('Network')) {
+        return `Couldn't reach your HWMR PC at ${host}.\n\nCheck that:\n• HWMR is running\n• PC and phone are on the same network\n• Local network access is allowed`;
+      }
+      return `Cannot reach HWMR Host (${e.message}).`;
+    }
+    if (!health.ok) return `Host returned HTTP ${health.status}. Is HWMR running?`;
+
+    let pairRes;
+    try {
+      pairRes = await lanFetch('/pair', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (e) {
+      return 'Network error during pairing.';
+    }
+    if (!pairRes.ok) {
+      return payload.nonce
+        ? 'This QR code has expired or is invalid.\nGenerate a new QR on the PC and try again.'
+        : 'Pairing code is invalid or expired.';
+    }
+    const data = await pairRes.json();
+    token = data.token;
+
+    saveHost(host, port);
+    connectLast.textContent = `Last: ${host}:${port}`;
+    connectLast.hidden = false;
+
+    startViewer();
+    return null; // success
+  } finally {
+    btnConnect.disabled = false;
+    btnConnect.textContent = 'Connect';
+  }
+}
+
 btnConnect.onclick = async () => {
   const host = fHost.value.trim();
   const port = fPort.value.trim();
@@ -185,54 +252,92 @@ btnConnect.onclick = async () => {
   if (!host) { connectErr.textContent = 'Enter the Host IP address.'; return; }
   if (!code) { connectErr.textContent = 'Enter the pairing code shown in the HWMR window.'; return; }
 
-  currentBase = `http://${host}:${port}`;
-  btnConnect.disabled = true;
-  btnConnect.textContent = 'Connecting…';
+  const err = await doConnect(host, port, { code });
+  if (err) connectErr.textContent = err;
+};
+
+const qrErr = document.querySelector('#qr-error') || (() => {
+  const p = document.createElement('p');
+  p.id = 'qr-error';
+  p.style.cssText = 'color:#ff8b8b; text-align:center; min-height:1.2em; margin-bottom:12px;';
+  qrScanner.insertBefore(p, btnCancelScan);
+  return p;
+})();
+
+function stopQr() {
+  if (qrAnimationFrame) cancelAnimationFrame(qrAnimationFrame);
+  if (qrStream) qrStream.getTracks().forEach(t => t.stop());
+  qrStream = null;
+  qrVideo.srcObject = null;
+  qrScanner.hidden = true;
+  connectEl.hidden = false;
+}
+
+btnCancelScan.onclick = stopQr;
+
+btnScan.onclick = async () => {
+  qrErr.textContent = '';
+  connectEl.hidden = true;
+  qrScanner.hidden = false;
 
   try {
-    // 1. Health check (also triggers LNA permission prompt)
-    let health;
-    try {
-      health = await lanFetch('/health');
-    } catch (e) {
-      connectErr.textContent = `Cannot reach HWMR Host.\n\nCheck:\n• PC and phone are on the same network\n• HWMR is running\n• Host IP is ${host}`;
-      return;
+    qrStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    qrVideo.srcObject = qrStream;
+    qrVideo.setAttribute('playsinline', true);
+    qrVideo.play();
+    qrAnimationFrame = requestAnimationFrame(scanQr);
+  } catch (e) {
+    stopQr();
+    if (e.name === 'NotAllowedError') {
+      connectErr.textContent = 'Camera access was not allowed.\nYou can allow Camera access in your browser settings, or connect manually instead.';
+    } else {
+      connectErr.textContent = 'No usable camera was found.\nYou can still connect manually.';
     }
-    if (!health.ok) {
-      connectErr.textContent = `Host returned HTTP ${health.status}. Is HWMR running?`;
-      return;
-    }
-
-    // 2. Pair
-    let pairRes;
-    try {
-      pairRes = await lanFetch('/pair', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ code }),
-      });
-    } catch (e) {
-      connectErr.textContent = 'Network error during pairing.';
-      return;
-    }
-    if (!pairRes.ok) {
-      connectErr.textContent = 'Pairing code is invalid or expired.';
-      return;
-    }
-    const data = await pairRes.json();
-    token = data.token; // memory only
-
-    // 3. Persist host (not token)
-    saveHost(host, port);
-    connectLast.textContent = `Last: ${host}:${port}`;
-    connectLast.hidden = false;
-
-    startViewer();
-  } finally {
-    btnConnect.disabled = false;
-    btnConnect.textContent = 'Connect';
   }
 };
+
+function scanQr() {
+  if (qrScanner.hidden) return;
+  if (qrVideo.readyState === qrVideo.HAVE_ENOUGH_DATA) {
+    const canvas = document.createElement('canvas');
+    canvas.width = qrVideo.videoWidth;
+    canvas.height = qrVideo.videoHeight;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(qrVideo, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    
+    // eslint-disable-next-line no-undef
+    const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
+    
+    if (code && code.data) {
+      handleQrData(code.data);
+      return;
+    }
+  }
+  qrAnimationFrame = requestAnimationFrame(scanQr);
+}
+
+async function handleQrData(data) {
+  try {
+    const payload = JSON.parse(data);
+    if (payload.v !== 1 || !payload.host || !payload.port || !payload.nonce) {
+      qrErr.textContent = 'This HWMR connection code uses an unsupported version or is invalid.';
+      qrAnimationFrame = requestAnimationFrame(scanQr);
+      return;
+    }
+    
+    stopQr();
+    
+    const err = await doConnect(payload.host, payload.port, { nonce: payload.nonce });
+    if (err) {
+      connectEl.hidden = false;
+      connectErr.textContent = err;
+    }
+  } catch (e) {
+    qrErr.textContent = 'This QR code is not a valid HWMR connection code.';
+    qrAnimationFrame = requestAnimationFrame(scanQr);
+  }
+}
 
 // Enter key on any connect-form field triggers connect
 [fHost, fPort, fCode].forEach(el => {
