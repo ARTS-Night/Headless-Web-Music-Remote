@@ -1,29 +1,340 @@
 <!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>HWMR PWA Connectivity Test</title>
+<title>HWMR</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#111111">
-<style>body{max-width:680px;margin:24px auto;padding:0 16px;background:#111;color:#eee;font:16px system-ui}label,input,button{display:block;box-sizing:border-box;margin:8px 0}input,button{width:100%;padding:10px;font:inherit;border:0;border-radius:8px}input{background:#fff;color:#111}button{background:#2869b6;color:#fff}#log{white-space:pre-wrap;background:#1c1c1c;padding:12px;border-radius:8px;min-height:8em}img,video{display:block;max-width:100%;margin-top:12px;background:#000}</style>
-<h1>HWMR PWA Connectivity Test</h1>
-<label>Host IP<input id="host" inputmode="decimal" placeholder="192.168.1.100"></label>
-<label>Port<input id="port" inputmode="numeric" value="8787"></label>
-<label>Pairing Code<input id="code" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="abcdef"></label>
-<button id="http">Test HTTP</button><button id="camera">Start Camera Preview</button><button id="camera-stop" hidden>Stop Camera</button><button id="pair">Pair</button><button id="control">Connect Control WS</button><button id="frame">Connect Frame WS</button><button id="reload">Send Reload</button>
-<p id="status"></p><pre id="log"></pre><video id="camera-preview" autoplay playsinline muted hidden></video><img id="image" alt="Latest HWMR JPEG frame">
+<style>
+html,body{margin:0;background:#111;color:#eee;font:14px system-ui;height:100%;height:100dvh;overflow:hidden}
+[hidden]{display:none!important}
+/* ── Connect screen ── */
+#connect{position:fixed;inset:0;display:grid;place-content:center;gap:10px;text-align:center;z-index:10;padding:24px;box-sizing:border-box}
+#connect h1{margin:0 0 8px}
+#connect label{display:block;text-align:left;font-size:12px;color:#aaa;margin:4px 0 1px}
+#connect input{display:block;width:100%;box-sizing:border-box;font-size:16px}
+#connect-form{display:grid;gap:0;max-width:320px;width:100%}
+#connect-last{font-size:12px;color:#aaa;margin:6px 0 2px}
+#connect-error{color:#ff8b8b;min-height:1.2em;font-size:13px}
+/* ── Shared input/button ── */
+input,button{box-sizing:border-box;border:0;border-radius:18px;padding:9px 13px;background:#292929;color:#fff}
+input{font-size:16px}
+button{cursor:pointer}
+button:active{opacity:.75}
+/* ── Main app ── */
+#app{box-sizing:border-box;display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:8px;height:100dvh;padding:max(12px,env(safe-area-inset-top)) 12px max(12px,env(safe-area-inset-bottom))}
+#viewer{min-width:0;min-height:0;overflow:hidden;background:#000;border-radius:12px;touch-action:none}
+#screen{display:block;width:100%;height:100%;object-fit:fill}
+#bar,#go{display:flex;gap:8px;justify-content:center}#bar{flex-wrap:wrap}
+#go input{flex:1;min-width:0}
+/* ── Off-screen text bridge ── */
+#text{position:fixed;top:-9999px;left:-9999px;opacity:0;pointer-events:none}
+/* ── Tab overlay ── */
+#tab-list{position:fixed;z-index:2;left:12px;right:12px;bottom:max(72px,calc(60px + env(safe-area-inset-bottom)));max-height:50dvh;overflow:auto;padding:8px;background:#1c1c1c;border-radius:12px;box-shadow:0 8px 28px #0009}
+#tab-list button{display:block;width:100%;margin:4px 0;border-radius:9px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#tab-list button.active{background:#4a6fa5}
+/* ── LNA reminder banner (shown on first connect prompt only) ── */
+#lna-note{font-size:12px;color:#888;margin:4px 0 0;line-height:1.4}
+</style>
+
+<!-- Connect / Pairing screen -->
+<div id="connect">
+  <h1>HWMR</h1>
+  <div id="connect-form">
+    <div id="connect-last" hidden></div>
+    <label for="f-host">Host IP</label>
+    <input id="f-host" inputmode="decimal" placeholder="192.168.1.100" autocomplete="off">
+    <label for="f-port">Port</label>
+    <input id="f-port" inputmode="numeric" value="8787" autocomplete="off">
+    <label for="f-code">Pairing Code</label>
+    <input id="f-code" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="8" placeholder="abcdef">
+    <br>
+    <button id="btn-connect" type="button">Connect</button>
+    <p id="lna-note">Allow network access when your browser asks.</p>
+    <p id="connect-error"></p>
+  </div>
+</div>
+
+<!-- Main viewer app (hidden until paired) -->
+<main id="app" hidden>
+  <form id="go"><input placeholder="URL or search" aria-label="URL or search"><button>Go</button></form>
+  <div id="viewer"><img id="screen" alt="Remote Brave screen"><textarea id="text" aria-label="Remote text input"></textarea></div>
+  <div id="bar">
+    <button data-action="back">←</button>
+    <button id="tabs">▢</button>
+    <button data-key="Space">▶</button>
+    <button data-action="reload">↻</button>
+    <button data-action="forward">→</button>
+    <button id="logout" type="button">Log out</button>
+  </div>
+  <section id="tab-list" hidden aria-label="Tabs"></section>
+</main>
+
 <script>
-const $=id=>document.querySelector('#'+id),log=m=>{$('log').textContent+=`${new Date().toLocaleTimeString()} ${m}\n`};
-let token='',control,frames,frameCount=0,cameraStream;
-const base=()=>`http://${$('host').value.trim()}:${$('port').value.trim()}`;
-const wsBase=()=>base().replace('http','ws');
-$('status').textContent=`secureContext=${isSecureContext}; mediaDevices=${!!navigator.mediaDevices}; getUserMedia=${!!navigator.mediaDevices?.getUserMedia}`;
-async function request(path,options={}){const response=await fetch(new Request(base()+path,{...options,targetAddressSpace:'local'}));const text=await response.text();log(`${path}: HTTP ${response.status}${path==='/pair'?'':text?` ${text.slice(0,160)}`:''}`);return[response,text]}
-$('http').onclick=()=>request('/health').catch(e=>log(`HTTP error: ${e.message}`));
-$('camera').onclick=async()=>{try{cameraStream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});const preview=$('camera-preview');preview.srcObject=cameraStream;preview.hidden=false;$('camera-stop').hidden=false;const track=cameraStream.getVideoTracks()[0],settings=track.getSettings();log(`Camera preview: ${settings.width||'?'}x${settings.height||'?'}`)}catch(e){log(`Camera error: ${e.name}: ${e.message}`)}};
-$('camera-stop').onclick=()=>{cameraStream?.getTracks().forEach(track=>track.stop());cameraStream=undefined;$('camera-preview').srcObject=null;$('camera-preview').hidden=true;$('camera-stop').hidden=true;log('Camera preview stopped')};
-$('pair').onclick=async()=>{try{const[r,text]=await request('/pair',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:$('code').value.trim()})});if(!r.ok)return;token=JSON.parse(text).token;log('Pairing: success (token retained only in memory)')}catch(e){log(`Pairing error: ${e.message}`)}};
-function connect(kind){if(!token)return log('Pair first');const ws=new WebSocket(`${wsBase()}/ws/${kind}`);ws.binaryType='blob';ws.onopen=()=>{log(`${kind} WS: open`);ws.send(JSON.stringify({type:'auth',token}))};ws.onclose=()=>log(`${kind} WS: closed`);ws.onerror=()=>log(`${kind} WS: error`);return ws}
-$('control').onclick=()=>{control=connect('control')};
-$('frame').onclick=()=>{frames=connect('frame');frames.onmessage=e=>{frameCount++;const old=$('image').src;$('image').src=URL.createObjectURL(e.data);if(old)URL.revokeObjectURL(old);log(`Frame: JPEG ${frameCount}, ${e.data.size} bytes`)}};
-$('reload').onclick=()=>{if(!control||control.readyState!==WebSocket.OPEN)return log('Control WS is not open');control.send(JSON.stringify({type:'reload'}));log('Reload sent')};
-if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(e=>log(`Service worker error: ${e.message}`));
+'use strict';
+
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const connectEl   = document.querySelector('#connect');
+const connectLast = document.querySelector('#connect-last');
+const fHost       = document.querySelector('#f-host');
+const fPort       = document.querySelector('#f-port');
+const fCode       = document.querySelector('#f-code');
+const btnConnect  = document.querySelector('#btn-connect');
+const connectErr  = document.querySelector('#connect-error');
+const app         = document.querySelector('#app');
+const viewer      = document.querySelector('#viewer');
+const image       = document.querySelector('#screen');
+const text        = document.querySelector('#text');
+const tabList     = document.querySelector('#tab-list');
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let token        = '';   // in-memory only; never persisted
+let control, frames;
+let composing    = false;
+let composed     = '';
+let touch        = null;
+let moved        = false;
+let viewport     = '';
+let currentBase  = '';   // http://HOST:PORT
+
+// ── Persistence (host/port only, never token) ─────────────────────────────────
+function savedHost() { try { return localStorage.hwmrHost || ''; } catch { return ''; } }
+function savedPort() { try { return localStorage.hwmrPort || '8787'; } catch { return '8787'; } }
+function saveHost(h, p) { try { localStorage.hwmrHost = h; localStorage.hwmrPort = p; } catch {} }
+
+// Restore saved host on load
+(function restoreLastHost() {
+  const h = savedHost(), p = savedPort();
+  if (h) {
+    fHost.value = h;
+    fPort.value = p;
+    connectLast.textContent = `Last: ${h}:${p}`;
+    connectLast.hidden = false;
+  }
+})();
+
+// ── Network helpers ───────────────────────────────────────────────────────────
+function base() { return currentBase; }
+function wsBase() { return base().replace(/^http/, 'ws'); }
+
+// All fetches to the LAN host use targetAddressSpace:'local' for Local Network Access
+async function lanFetch(path, options = {}) {
+  return fetch(new Request(base() + path, { ...options, targetAddressSpace: 'local' }));
+}
+
+// ── Auth helpers ──────────────────────────────────────────────────────────────
+function authHeader() { return { authorization: `Bearer ${token}` }; }
+const wsSend = value => control?.send(JSON.stringify(value));
+
+// ── Viewport resize propagation ───────────────────────────────────────────────
+function fit() {
+  const r = viewer.getBoundingClientRect();
+  const w = Math.round(r.width), h = Math.round(r.height);
+  const next = `${w}x${h}`;
+  if (w && h && next !== viewport && control?.readyState === WebSocket.OPEN) {
+    viewport = next;
+    wsSend({ type: 'resize', width: w, height: h });
+  }
+}
+new ResizeObserver(fit).observe(viewer);
+
+// ── Session expiry / disconnect ───────────────────────────────────────────────
+function showConnect(message) {
+  token = '';
+  tabList.hidden = true;
+  app.hidden = true;
+  connectEl.hidden = false;
+  connectErr.textContent = message || '';
+  fCode.value = '';
+  fCode.focus();
+}
+
+function expired() { showConnect('Session expired. Pair again.'); }
+
+// ── Open main viewer after successful auth ─────────────────────────────────────
+function startViewer() {
+  connectEl.hidden = true;
+  app.hidden = false;
+
+  // Control WebSocket
+  control = new WebSocket(`${wsBase()}/ws/control`);
+  control.onopen = () => { control.send(JSON.stringify({ type: 'auth', token })); requestAnimationFrame(fit); };
+  control.onclose = expired;
+  control.onmessage = e => {
+    const r = JSON.parse(e.data);
+    if (r.ok && r.result?.text_input) text.focus();
+  };
+
+  // Frame WebSocket
+  frames = new WebSocket(`${wsBase()}/ws/frame`);
+  frames.binaryType = 'blob';
+  frames.onopen = () => frames.send(JSON.stringify({ type: 'auth', token }));
+  frames.onclose = expired;
+  frames.onmessage = e => {
+    const old = image.src;
+    image.src = URL.createObjectURL(e.data);
+    if (old) URL.revokeObjectURL(old);
+  };
+}
+
+// ── Connect / Pair flow ────────────────────────────────────────────────────────
+btnConnect.onclick = async () => {
+  const host = fHost.value.trim();
+  const port = fPort.value.trim();
+  const code = fCode.value.trim();
+  connectErr.textContent = '';
+
+  if (!host) { connectErr.textContent = 'Enter the Host IP address.'; return; }
+  if (!code) { connectErr.textContent = 'Enter the pairing code shown in the HWMR window.'; return; }
+
+  currentBase = `http://${host}:${port}`;
+  btnConnect.disabled = true;
+  btnConnect.textContent = 'Connecting…';
+
+  try {
+    // 1. Health check (also triggers LNA permission prompt)
+    let health;
+    try {
+      health = await lanFetch('/health');
+    } catch (e) {
+      connectErr.textContent = `Cannot reach HWMR Host.\n\nCheck:\n• PC and phone are on the same network\n• HWMR is running\n• Host IP is ${host}`;
+      return;
+    }
+    if (!health.ok) {
+      connectErr.textContent = `Host returned HTTP ${health.status}. Is HWMR running?`;
+      return;
+    }
+
+    // 2. Pair
+    let pairRes;
+    try {
+      pairRes = await lanFetch('/pair', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+    } catch (e) {
+      connectErr.textContent = 'Network error during pairing.';
+      return;
+    }
+    if (!pairRes.ok) {
+      connectErr.textContent = 'Pairing code is invalid or expired.';
+      return;
+    }
+    const data = await pairRes.json();
+    token = data.token; // memory only
+
+    // 3. Persist host (not token)
+    saveHost(host, port);
+    connectLast.textContent = `Last: ${host}:${port}`;
+    connectLast.hidden = false;
+
+    startViewer();
+  } finally {
+    btnConnect.disabled = false;
+    btnConnect.textContent = 'Connect';
+  }
+};
+
+// Enter key on any connect-form field triggers connect
+[fHost, fPort, fCode].forEach(el => {
+  el.addEventListener('keydown', e => { if (e.key === 'Enter') btnConnect.click(); });
+});
+
+// ── Touch / pointer input ─────────────────────────────────────────────────────
+function point(e) {
+  const r = image.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width;
+  const y = (e.clientY - r.top)  / r.height;
+  return {
+    x: x * (image.naturalWidth  || 430),
+    y: y * (image.naturalHeight || 932),
+  };
+}
+
+image.onclick = e => { if (!moved) wsSend({ type: 'tap', ...point(e) }); moved = false; };
+image.onwheel = e => { e.preventDefault(); wsSend({ type: 'scroll', ...point(e), delta_y: e.deltaY }); };
+
+image.addEventListener('touchstart', e => { touch = e.touches[0]; moved = false; }, { passive: true });
+image.addEventListener('touchmove', e => {
+  if (!touch) return;
+  const next = e.touches[0];
+  if (Math.abs(touch.clientX - next.clientX) + Math.abs(touch.clientY - next.clientY) > 3) moved = true;
+  wsSend({ type: 'scroll', ...point(next), delta_y: touch.clientY - next.clientY });
+  touch = next;
+  e.preventDefault();
+}, { passive: false });
+image.addEventListener('touchend', () => { touch = undefined; });
+
+// ── Navigation bar buttons ─────────────────────────────────────────────────────
+document.querySelectorAll('[data-action]').forEach(b => {
+  b.onclick = () => wsSend({ type: b.dataset.action });
+});
+document.querySelector('[data-key]').onclick = e => {
+  wsSend({ type: 'key', key: e.currentTarget.dataset.key });
+};
+
+// ── URL / Search ───────────────────────────────────────────────────────────────
+document.querySelector('#go').onsubmit = e => {
+  e.preventDefault();
+  const field = e.currentTarget.querySelector('input');
+  const value = field.value.trim();
+  field.blur();
+  if (value) wsSend({ type: 'go', text: value });
+};
+
+// ── Tabs ───────────────────────────────────────────────────────────────────────
+document.querySelector('#tabs').onclick = async () => {
+  let r;
+  try { r = await lanFetch('/tabs', { headers: authHeader() }); }
+  catch { return; }
+  if (r.status === 401) return expired();
+  const data = await r.json();
+  tabList.replaceChildren(...data.items.map(t => {
+    const b = document.createElement('button');
+    b.textContent = `${t.active ? '● ' : ''}${t.title || t.url}`;
+    b.title = t.url;
+    b.className = t.active ? 'active' : '';
+    b.onclick = () => { tabList.hidden = true; wsSend({ type: 'select_tab', id: t.id }); };
+    return b;
+  }));
+  tabList.hidden = !tabList.hidden;
+};
+
+// ── Logout ─────────────────────────────────────────────────────────────────────
+document.querySelector('#logout').onclick = async () => {
+  try {
+    const r = await lanFetch('/logout', { method: 'POST', headers: authHeader() });
+    if (!r.ok) return expired();
+  } catch { return expired(); }
+  if (control) { control.onclose = null; control.close(); }
+  if (frames)  { frames.onclose  = null; frames.close();  }
+  showConnect('Logged out. Check the HWMR window for the new pairing code.');
+};
+
+// ── Text bridge (IME-safe) ─────────────────────────────────────────────────────
+text.oncompositionstart = () => { composing = true; };
+text.oncompositionend = e => {
+  composing = false;
+  composed = e.data;
+  wsSend({ type: 'insert_text', text: e.data });
+  text.value = '';
+};
+text.oninput = e => {
+  if (!composing && e.data) {
+    if (e.data !== composed) wsSend({ type: 'insert_text', text: e.data });
+    composed = '';
+    text.value = '';
+  }
+};
+text.onkeydown = e => {
+  if (['Backspace', 'Enter', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+    e.preventDefault();
+    wsSend({ type: 'key', key: e.key });
+    text.value = '';
+  }
+};
+
+// ── Service Worker registration ────────────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
 </script>
