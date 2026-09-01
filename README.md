@@ -90,4 +90,4 @@ node scripts/text-input-scenario.mjs
 
 ## Post-release policy
 
-HWMR v0.1.0 is in feedback and validation mode. Until results from roughly 3–5 independent environments are collected, new features are generally deferred. Reproducible real-world bugs should receive the smallest practical v0.1.1 fix; feature requests are collected in Issues. See [CONTRIBUTING.md](CONTRIBUTING.md).
+HWMR v0.1.x is in feedback and validation mode. Until results from roughly 3–5 independent environments are collected, new features are generally deferred. Reproducible real-world bugs should receive the smallest practical patch fix; feature requests are collected in Issues. See [CONTRIBUTING.md](CONTRIBUTING.md).

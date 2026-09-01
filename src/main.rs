@@ -2,9 +2,11 @@ mod audio;
 
 use std::{
     collections::HashMap,
+    ffi::c_void,
     net::{Ipv4Addr, UdpSocket},
+    os::windows::io::AsRawHandle,
     path::{Path, PathBuf},
-    process::Stdio,
+    process::{Command, Stdio},
     sync::Arc,
     time::Duration,
 };
@@ -25,18 +27,58 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{
-    process::Command,
     sync::{Mutex, oneshot, watch},
     time::sleep,
 };
 use tokio_tungstenite::tungstenite::Message as CdpMessage;
 use windows_sys::Win32::{
-    Foundation::POINT,
+    Foundation::{CloseHandle, HANDLE, POINT},
+    System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    },
     UI::WindowsAndMessaging::{GetCursorPos, GetForegroundWindow},
 };
 
 const VIEWPORT: &str = "430,932";
 const CDP_PORT: u16 = 9229;
+
+struct BraveJob(HANDLE);
+
+impl BraveJob {
+    fn attach(child: &mut std::process::Child) -> Result<Self> {
+        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if job.is_null() {
+            bail!("create HWMR Brave job: {}", std::io::Error::last_os_error());
+        }
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let configured = unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &limits as *const _ as *const c_void,
+                std::mem::size_of_val(&limits) as u32,
+            )
+        };
+        let assigned = configured != 0
+            && unsafe { AssignProcessToJobObject(job, child.as_raw_handle() as HANDLE) } != 0;
+        if !assigned {
+            let error = std::io::Error::last_os_error();
+            let _ = child.kill();
+            unsafe { CloseHandle(job) };
+            bail!("assign HWMR Brave to its lifetime job: {error}");
+        }
+        Ok(Self(job))
+    }
+}
+
+impl Drop for BraveJob {
+    fn drop(&mut self) {
+        unsafe { CloseHandle(self.0) };
+    }
+}
 
 fn host_port() -> u16 {
     std::env::var("HWMR_HOST_PORT")
@@ -183,7 +225,7 @@ async fn main() -> Result<()> {
     let profile = profile_dir()?;
     std::fs::create_dir_all(&profile)?;
     let brave = brave_path()?;
-    let port = launch_brave(&brave, &profile).await?;
+    let (port, _brave_job) = launch_brave(&brave, &profile).await?;
     let target = page_target(port).await?;
     let active_id = Arc::new(Mutex::new(target.id.clone()));
     let code = random_hex(3);
@@ -265,7 +307,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn launch_brave(brave: &Path, profile: &Path) -> Result<u16> {
+async fn launch_brave(brave: &Path, profile: &Path) -> Result<(u16, BraveJob)> {
     let port_file = profile.join("DevToolsActivePort");
     if port_file.exists() {
         bail!(
@@ -275,7 +317,7 @@ async fn launch_brave(brave: &Path, profile: &Path) -> Result<u16> {
     let port_guard = std::net::TcpListener::bind(("127.0.0.1", CDP_PORT))
         .with_context(|| format!("CDP loopback port {CDP_PORT} is already in use"))?;
     drop(port_guard);
-    Command::new(brave)
+    let mut child = Command::new(brave)
         .args([
             "--headless",
             "--remote-debugging-address=127.0.0.1",
@@ -291,10 +333,11 @@ async fn launch_brave(brave: &Path, profile: &Path) -> Result<u16> {
         .stderr(Stdio::null())
         .spawn()
         .context("launch Headless Brave")?;
+    let job = BraveJob::attach(&mut child)?;
     for _ in 0..40 {
         if let Ok(value) = std::fs::read_to_string(&port_file) {
             if let Some(port) = value.lines().next().and_then(|line| line.parse().ok()) {
-                return Ok(port);
+                return Ok((port, job));
             }
         }
         if let Ok(response) = reqwest::get(format!("http://127.0.0.1:{CDP_PORT}/json/list")).await {
@@ -306,7 +349,7 @@ async fn launch_brave(brave: &Path, profile: &Path) -> Result<u16> {
                         .await?;
                 let browser_path = url::Url::parse(&version.websocket)?.path().to_owned();
                 std::fs::write(&port_file, format!("{CDP_PORT}\n{browser_path}\n"))?;
-                return Ok(CDP_PORT);
+                return Ok((CDP_PORT, job));
             }
         }
         sleep(Duration::from_millis(250)).await;
