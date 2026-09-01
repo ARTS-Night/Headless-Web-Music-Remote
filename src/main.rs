@@ -138,18 +138,21 @@ fn lan_address() -> Option<Ipv4Addr> {
     }
 }
 
-fn screencast_params(width: u32, height: u32) -> Value {
-    let quality = std::env::var("HWMR_JPEG_QUALITY")
+fn jpeg_quality() -> u8 {
+    std::env::var("HWMR_JPEG_QUALITY")
         .ok()
         .and_then(|v| v.parse().ok())
         .filter(|v| (1..=100).contains(v))
-        .unwrap_or(60);
+        .unwrap_or(60)
+}
+
+fn screencast_params(width: u32, height: u32) -> Value {
     let every_nth = std::env::var("HWMR_EVERY_NTH_FRAME")
         .ok()
         .and_then(|v| v.parse().ok())
         .filter(|v| *v > 0)
         .unwrap_or(2);
-    json!({"format":"jpeg", "quality":quality, "maxWidth":width.clamp(1, 1920), "maxHeight":height.clamp(1, 2400), "everyNthFrame":every_nth})
+    json!({"format":"jpeg", "quality":jpeg_quality(), "maxWidth":width.clamp(1, 1920), "maxHeight":height.clamp(1, 2400), "everyNthFrame":every_nth})
 }
 
 #[derive(Clone)]
@@ -159,6 +162,7 @@ struct App {
     active: Arc<Mutex<Cdp>>,
     frame_tx: watch::Sender<Vec<u8>>,
     frames: watch::Receiver<Vec<u8>>,
+    viewport: Arc<Mutex<(u32, u32)>>,
     auth: Arc<Mutex<Auth>>,
 }
 struct Auth {
@@ -263,6 +267,7 @@ async fn main() -> Result<()> {
         active: Arc::new(Mutex::new(cdp)),
         frame_tx,
         frames,
+        viewport: Arc::new(Mutex::new((430, 932))),
         auth: Arc::new(Mutex::new(Auth {
             code: code.clone(),
             token: None,
@@ -601,9 +606,29 @@ async fn select_tab(app: &App, id: &str) -> Result<Value> {
     )
     .await?;
     next.command("Page.enable", json!({})).await?;
+    let (width, height) = *app.viewport.lock().await;
+    next.command(
+        "Emulation.setDeviceMetricsOverride",
+        device_metrics(width, height),
+    )
+    .await?;
     *app.active_id.lock().await = target.id;
-    next.command("Page.startScreencast", screencast_params(430, 932))
+    next.command("Page.startScreencast", screencast_params(width, height))
         .await?;
+    if let Ok(frame) = next
+        .command(
+            "Page.captureScreenshot",
+            json!({"format":"jpeg","quality":jpeg_quality()}),
+        )
+        .await
+    {
+        if let Some(data) = frame["result"]["data"]
+            .as_str()
+            .and_then(|data| base64::engine::general_purpose::STANDARD.decode(data).ok())
+        {
+            let _ = app.frame_tx.send(data);
+        }
+    }
     *app.active.lock().await = next;
     Ok(json!({"selected":id}))
 }
@@ -643,6 +668,8 @@ async fn controls(mut socket: WebSocket, app: App) {
                         .await
                     }
                     Ok(Control::Resize { width, height }) => {
+                        let width = width.clamp(1, 1920);
+                        let height = height.clamp(1, 2400);
                         let _ = cdp.command("Page.stopScreencast", json!({})).await;
                         match cdp
                             .command(
@@ -652,6 +679,7 @@ async fn controls(mut socket: WebSocket, app: App) {
                             .await
                         {
                             Ok(_) => {
+                                *app.viewport.lock().await = (width, height);
                                 cdp.command(
                                     "Page.startScreencast",
                                     screencast_params(width, height),
