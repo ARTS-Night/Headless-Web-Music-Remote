@@ -32,6 +32,20 @@ const BRAVE: &str = r"C:\Program Files\BraveSoftware\Brave-Browser\Application\b
 const VIEWPORT: &str = "430,932";
 const CDP_PORT: u16 = 9229;
 
+fn screencast_params() -> Value {
+    let quality = std::env::var("HWMR_JPEG_QUALITY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|v| (1..=100).contains(v))
+        .unwrap_or(60);
+    let every_nth = std::env::var("HWMR_EVERY_NTH_FRAME")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(2);
+    json!({"format":"jpeg", "quality":quality, "maxWidth":430, "maxHeight":932, "everyNthFrame":every_nth})
+}
+
 #[derive(Clone)]
 struct App {
     port: u16,
@@ -127,11 +141,8 @@ async fn main() -> Result<()> {
     cdp.command("Page.navigate", json!({"url":"https://www.youtube.com/"}))
         .await?;
     cdp.command("Page.enable", json!({})).await?;
-    cdp.command(
-        "Page.startScreencast",
-        json!({"format":"jpeg", "quality":70, "maxWidth":430, "maxHeight":932, "everyNthFrame":1}),
-    )
-    .await?;
+    cdp.command("Page.startScreencast", screencast_params())
+        .await?;
     let visibility = cdp
         .command(
             "Runtime.evaluate",
@@ -469,11 +480,8 @@ async fn select_tab(app: &App, id: &str) -> Result<Value> {
     .await?;
     next.command("Page.enable", json!({})).await?;
     *app.active_id.lock().await = target.id;
-    next.command(
-        "Page.startScreencast",
-        json!({"format":"jpeg", "quality":70, "maxWidth":430, "maxHeight":932, "everyNthFrame":1}),
-    )
-    .await?;
+    next.command("Page.startScreencast", screencast_params())
+        .await?;
     *app.active.lock().await = next;
     Ok(json!({"selected":id}))
 }
@@ -488,14 +496,14 @@ async fn controls(mut socket: WebSocket, app: App) {
             command => {
                 let cdp = app.active.lock().await.clone();
                 match command {
-            Ok(Control::Tap { x, y }) => {
-                let down = cdp
+                    Ok(Control::Tap { x, y }) => {
+                        let down = cdp
                     .command(
                         "Input.dispatchMouseEvent",
                         json!({"type":"mousePressed","x":x,"y":y,"button":"left","clickCount":1}),
                     )
                     .await;
-                match down {
+                        match down {
                     Ok(_) => {
                         match cdp.command("Input.dispatchMouseEvent", json!({"type":"mouseReleased","x":x,"y":y,"button":"left","clickCount":1})).await {
                             Ok(_) => cdp.command("Runtime.evaluate", json!({"expression":format!("(()=>{{const e=document.elementFromPoint({x},{y});return !!e&&(e.matches('input,textarea')||e.isContentEditable)}})()"),"returnByValue":true})).await.map(|hit| json!({"text_input":hit["result"]["result"]["value"].as_bool().unwrap_or(false)})),
@@ -504,42 +512,60 @@ async fn controls(mut socket: WebSocket, app: App) {
                     }
                     Err(error) => Err(error),
                 }
-            }
-            Ok(Control::Scroll { x, y, delta_y }) => {
-                cdp.command(
-                    "Input.dispatchMouseEvent",
-                    json!({"type":"mouseWheel","x":x,"y":y,"deltaX":0,"deltaY":delta_y}),
-                )
-                .await
-            }
-            Ok(Control::Back) => cdp.command("Page.goBack", json!({})).await,
-            Ok(Control::Forward) => cdp.command("Page.goForward", json!({})).await,
-            Ok(Control::Reload) => cdp.command("Page.reload", json!({})).await,
-            Ok(Control::Navigate { url }) => cdp.command("Page.navigate", json!({"url":url})).await,
-            Ok(Control::Go { text }) => cdp.command("Page.navigate", json!({"url": navigation_url(&text)})).await,
-            Ok(Control::Key { key }) => {
-                let (key_value, code, virtual_key) = cdp_key(&key);
-                let down = cdp
+                    }
+                    Ok(Control::Scroll { x, y, delta_y }) => {
+                        cdp.command(
+                            "Input.dispatchMouseEvent",
+                            json!({"type":"mouseWheel","x":x,"y":y,"deltaX":0,"deltaY":delta_y}),
+                        )
+                        .await
+                    }
+                    Ok(Control::Back) => cdp.command("Page.goBack", json!({})).await,
+                    Ok(Control::Forward) => cdp.command("Page.goForward", json!({})).await,
+                    Ok(Control::Reload) => cdp.command("Page.reload", json!({})).await,
+                    Ok(Control::Navigate { url }) => {
+                        cdp.command("Page.navigate", json!({"url":url})).await
+                    }
+                    Ok(Control::Go { text }) => {
+                        cdp.command("Page.navigate", json!({"url": navigation_url(&text)}))
+                            .await
+                    }
+                    Ok(Control::Key { key }) => {
+                        let (key_value, code, virtual_key) = cdp_key(&key);
+                        let down = cdp
                     .command(
                         "Input.dispatchKeyEvent",
                         json!({"type":"keyDown","key":key_value,"code":code,"windowsVirtualKeyCode":virtual_key,"nativeVirtualKeyCode":virtual_key}),
                     )
                     .await;
-                match down {
+                        match down {
                     Ok(_) => {
                         cdp.command("Input.dispatchKeyEvent", json!({"type":"keyUp","key":key_value,"code":code,"windowsVirtualKeyCode":virtual_key,"nativeVirtualKeyCode":virtual_key}))
                             .await
                     }
                     Err(error) => Err(error),
                 }
-            }
-            Ok(Control::InsertText { text }) => cdp.command("Input.insertText", json!({"text":text})).await,
-            Ok(Control::Screencast { enabled }) => cdp.command(
-                if enabled { "Page.startScreencast" } else { "Page.stopScreencast" },
-                if enabled { json!({"format":"jpeg", "quality":70, "maxWidth":430, "maxHeight":932, "everyNthFrame":1}) } else { json!({}) },
-            ).await,
-            Err(error) => Err(error.into()),
-            Ok(Control::SelectTab { .. }) => unreachable!(),
+                    }
+                    Ok(Control::InsertText { text }) => {
+                        cdp.command("Input.insertText", json!({"text":text})).await
+                    }
+                    Ok(Control::Screencast { enabled }) => {
+                        cdp.command(
+                            if enabled {
+                                "Page.startScreencast"
+                            } else {
+                                "Page.stopScreencast"
+                            },
+                            if enabled {
+                                screencast_params()
+                            } else {
+                                json!({})
+                            },
+                        )
+                        .await
+                    }
+                    Err(error) => Err(error.into()),
+                    Ok(Control::SelectTab { .. }) => unreachable!(),
                 }
             }
         };
