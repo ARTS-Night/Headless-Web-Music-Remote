@@ -77,7 +77,5 @@ document.querySelector('#tabs').onclick=async()=>{
 image.addEventListener('touchstart',e=>{touch=e.touches[0];moved=false},{passive:true});
 image.addEventListener('touchmove',e=>{if(!touch)return;const next=e.touches[0];if(Math.abs(touch.clientX-next.clientX)+Math.abs(touch.clientY-next.clientY)>3)moved=true;send({type:'scroll',...point(next),delta_y:touch.clientY-next.clientY});touch=next;e.preventDefault()},{passive:false});
 image.addEventListener('touchend',()=>{touch=undefined});
-const qrCode=new URL(location.href).searchParams.get('pair');
-if(qrCode){history.replaceState(null,'',location.pathname);pairWith(qrCode)}
 start();
 </script>
