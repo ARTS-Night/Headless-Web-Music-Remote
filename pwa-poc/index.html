@@ -8,17 +8,18 @@
 <label>Host IP<input id="host" inputmode="decimal" placeholder="192.168.1.100"></label>
 <label>Port<input id="port" inputmode="numeric" value="8787"></label>
 <label>Pairing Code<input id="code" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="abcdef"></label>
-<button id="http">Test HTTP</button><button id="camera">Test Camera</button><button id="pair">Pair</button><button id="control">Connect Control WS</button><button id="frame">Connect Frame WS</button><button id="reload">Send Reload</button>
-<p id="status"></p><pre id="log"></pre><img id="image" alt="Latest HWMR JPEG frame">
+<button id="http">Test HTTP</button><button id="camera">Start Camera Preview</button><button id="camera-stop" hidden>Stop Camera</button><button id="pair">Pair</button><button id="control">Connect Control WS</button><button id="frame">Connect Frame WS</button><button id="reload">Send Reload</button>
+<p id="status"></p><pre id="log"></pre><video id="camera-preview" autoplay playsinline muted hidden></video><img id="image" alt="Latest HWMR JPEG frame">
 <script>
 const $=id=>document.querySelector('#'+id),log=m=>{$('log').textContent+=`${new Date().toLocaleTimeString()} ${m}\n`};
-let token='',control,frames,frameCount=0;
+let token='',control,frames,frameCount=0,cameraStream;
 const base=()=>`http://${$('host').value.trim()}:${$('port').value.trim()}`;
 const wsBase=()=>base().replace('http','ws');
 $('status').textContent=`secureContext=${isSecureContext}; mediaDevices=${!!navigator.mediaDevices}; getUserMedia=${!!navigator.mediaDevices?.getUserMedia}`;
 async function request(path,options={}){const response=await fetch(new Request(base()+path,{...options,targetAddressSpace:'local'}));const text=await response.text();log(`${path}: HTTP ${response.status}${path==='/pair'?'':text?` ${text.slice(0,160)}`:''}`);return[response,text]}
 $('http').onclick=()=>request('/health').catch(e=>log(`HTTP error: ${e.message}`));
-$('camera').onclick=async()=>{try{const stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});stream.getTracks().forEach(track=>track.stop());log('Camera permission: granted and stream stopped')}catch(e){log(`Camera error: ${e.name}: ${e.message}`)}};
+$('camera').onclick=async()=>{try{cameraStream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});const preview=$('camera-preview');preview.srcObject=cameraStream;preview.hidden=false;$('camera-stop').hidden=false;const track=cameraStream.getVideoTracks()[0],settings=track.getSettings();log(`Camera preview: ${settings.width||'?'}x${settings.height||'?'}`)}catch(e){log(`Camera error: ${e.name}: ${e.message}`)}};
+$('camera-stop').onclick=()=>{cameraStream?.getTracks().forEach(track=>track.stop());cameraStream=undefined;$('camera-preview').srcObject=null;$('camera-preview').hidden=true;$('camera-stop').hidden=true;log('Camera preview stopped')};
 $('pair').onclick=async()=>{try{const[r,text]=await request('/pair',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:$('code').value.trim()})});if(!r.ok)return;token=JSON.parse(text).token;log('Pairing: success (token retained only in memory)')}catch(e){log(`Pairing error: ${e.message}`)}};
 function connect(kind){if(!token)return log('Pair first');const ws=new WebSocket(`${wsBase()}/ws/${kind}`);ws.binaryType='blob';ws.onopen=()=>{log(`${kind} WS: open`);ws.send(JSON.stringify({type:'auth',token}))};ws.onclose=()=>log(`${kind} WS: closed`);ws.onerror=()=>log(`${kind} WS: error`);return ws}
 $('control').onclick=()=>{control=connect('control')};
