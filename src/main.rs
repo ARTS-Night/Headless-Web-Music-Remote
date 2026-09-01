@@ -315,6 +315,11 @@ impl Cdp {
                 }
             }
         });
+        cdp.command(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width":430,"height":932,"deviceScaleFactor":1,"mobile":false}),
+        )
+        .await?;
         Ok(cdp)
     }
 
