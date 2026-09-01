@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: HWMR v0.1.0 release
+    url: https://github.com/ARTS-Night/Headless-Web-Music-Remote/releases/tag/v0.1.0
+    about: Download the current Windows release.

@@ -1,0 +1,96 @@
+name: Device validation
+description: Share a successful or unsuccessful phone validation result.
+title: "[Device validation]: "
+labels: [device-validation]
+body:
+  - type: markdown
+    attributes:
+      value: "Success reports are useful too. Select Yes, No, or Not tested for each item. Do not include pairing codes, tokens, cookies, passwords, or private browsing data."
+  - type: input
+    id: hwmr-version
+    attributes:
+      label: HWMR version
+      placeholder: e.g. v0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Android, iPhone]
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Phone model
+  - type: input
+    id: os
+    attributes:
+      label: OS version
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+  - type: input
+    id: ime
+    attributes:
+      label: Keyboard / IME
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+  - type: input
+    id: brave
+    attributes:
+      label: Brave version
+  - type: markdown
+    attributes:
+      value: "## Validation matrix"
+  - type: dropdown
+    id: pairing
+    attributes: {label: Pairing, options: ["Yes", "No", "Not tested"]}
+  - type: dropdown
+    id: viewer
+    attributes: {label: Viewer / frame, options: ["Yes", "No", "Not tested"]}
+  - type: dropdown
+    id: tap
+    attributes: {label: Tap, options: ["Yes", "No", "Not tested"]}
+  - type: dropdown
+    id: scroll
+    attributes: {label: Scroll, options: ["Yes", "No", "Not tested"]}
+  - type: dropdown
+    id: navigation
+    attributes: {label: Back / Forward / Reload / URL or search, options: ["Yes", "No", "Not tested"]}
+  - type: dropdown
+    id: tabs
+    attributes: {label: Tabs, options: ["Yes", "No", "Not tested"]}
+  - type: dropdown
+    id: ascii
+    attributes: {label: ASCII text, options: ["Yes", "No", "Not tested"]}
+  - type: dropdown
+    id: editing
+    attributes: {label: Space / Backspace / Enter, options: ["Yes", "No", "Not tested"]}
+  - type: dropdown
+    id: japanese
+    attributes: {label: Japanese IME / hiragana / kanji / candidates, options: ["Yes", "No", "Not tested"]}
+  - type: dropdown
+    id: background
+    attributes: {label: Background / foreground, options: ["Yes", "No", "Not tested"]}
+  - type: dropdown
+    id: reconnect
+    attributes: {label: Reconnect / re-pair, options: ["Yes", "No", "Not tested"]}
+  - type: dropdown
+    id: audio
+    attributes: {label: PC audio continuity, options: ["Yes", "No", "Not tested"]}
+  - type: textarea
+    id: overall
+    attributes:
+      label: Overall result and problems noticed
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional notes, screenshots, or GIF
+      description: Do not include pairing codes, tokens, cookies, passwords, or private browsing data.

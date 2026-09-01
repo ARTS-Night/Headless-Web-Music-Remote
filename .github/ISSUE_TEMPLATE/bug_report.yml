@@ -1,0 +1,89 @@
+name: Bug report
+description: Report a reproducible HWMR problem.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Thanks for testing HWMR. Do not include pairing codes, tokens, cookies, passwords, private browsing data, or other sensitive information."
+  - type: input
+    id: hwmr-version
+    attributes:
+      label: HWMR version
+      placeholder: e.g. v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: e.g. Windows 11 24H2
+    validations:
+      required: true
+  - type: input
+    id: brave
+    attributes:
+      label: Brave version
+    validations:
+      required: true
+  - type: input
+    id: phone
+    attributes:
+      label: Phone model and OS version
+      placeholder: e.g. Pixel 9, Android 16
+  - type: input
+    id: browser
+    attributes:
+      label: Phone browser and version
+  - type: input
+    id: ime
+    attributes:
+      label: Keyboard / IME
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection method
+      options:
+        - Same Wi-Fi / LAN
+        - Ethernet PC + Wi-Fi phone
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Problem summary
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: consistency
+    attributes:
+      label: Does it reproduce consistently?
+      options: [Always, Sometimes, Once]
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs, screenshots, or GIF
+      description: Do not include pairing codes, tokens, cookies, passwords, private browsing data, or other sensitive information.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context

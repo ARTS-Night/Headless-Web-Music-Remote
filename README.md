@@ -2,6 +2,8 @@
 
 HWMR runs Brave headlessly on a Windows PC, keeps audio on that PC, and sends rendered JPEG frames plus controls to a phone on a trusted LAN. The phone never controls the Windows foreground window or mouse: every remote action goes through CDP to the dedicated headless Brave instance.
 
+**At a glance:** Headless Brave runs on the Windows PC; the phone receives its rendered browser view and controls it through HWMR/CDP. Audio remains on the PC, while the Windows foreground window and cursor remain untouched.
+
 ## Requirements
 
 - Windows 10 or later
@@ -18,6 +20,14 @@ Node.js, npm, Vite, Rust, and a browser dev server are **not** needed to run the
 4. Enter the one-time pairing code printed by HWMR.
 
 The host prints its dedicated profile location, local URL, LAN URL when a private LAN address is detected, pairing code, and CDP binding. Pairing tokens exist only in host memory; restarting HWMR invalidates existing phone sessions.
+
+## Feedback and device validation
+
+- Found a reproducible problem? [Open a Bug Report](https://github.com/ARTS-Night/Headless-Web-Music-Remote/issues/new?template=bug_report.yml).
+- Tested a phone or keyboard? [Share Device Validation](https://github.com/ARTS-Night/Headless-Web-Music-Remote/issues/new?template=device_validation.yml), including successful results.
+- Have an idea? [Open a Feature Request](https://github.com/ARTS-Night/Headless-Web-Music-Remote/issues/new?template=feature_request.yml).
+
+See [the demo capture guide](docs/recording-guide.md) for the planned README GIF. No visual link is included until an asset is available.
 
 ## Controls
 
@@ -77,3 +87,7 @@ node scripts/text-input-scenario.mjs
 - Physical Android Japanese Gboard validation remains pending.
 - iPhone validation remains pending.
 - The transport is JPEG/WebSocket (`quality=60`, every second frame), not WebRTC or video streaming.
+
+## Post-release policy
+
+HWMR v0.1.0 is in feedback and validation mode. Until results from roughly 3–5 independent environments are collected, new features are generally deferred. Reproducible real-world bugs should receive the smallest practical v0.1.1 fix; feature requests are collected in Issues. See [CONTRIBUTING.md](CONTRIBUTING.md).
