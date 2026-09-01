@@ -47,12 +47,12 @@ function start(){
   control.onmessage=e=>{const r=JSON.parse(e.data);if(r.ok&&r.result?.text_input)text.focus()};
   frames.onmessage=e=>{const old=image.src;image.src=URL.createObjectURL(e.data);if(old)URL.revokeObjectURL(old)};
 }
-document.querySelector('#pair form').onsubmit=async e=>{
-  e.preventDefault();const code=e.currentTarget.querySelector('input').value.trim();
+async function pairWith(code){
   const r=await fetch('/pair',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code})});
   if(!r.ok){error.textContent='Incorrect pairing code';return}
   token=(await r.json()).token;localStorage.hwmrToken=token;start();
-};
+}
+document.querySelector('#pair form').onsubmit=e=>{e.preventDefault();pairWith(e.currentTarget.querySelector('input').value.trim())};
 function point(e){
   const r=image.getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;
   return{x:x*(image.naturalWidth||430),y:y*(image.naturalHeight||932)};
@@ -77,5 +77,7 @@ document.querySelector('#tabs').onclick=async()=>{
 image.addEventListener('touchstart',e=>{touch=e.touches[0];moved=false},{passive:true});
 image.addEventListener('touchmove',e=>{if(!touch)return;const next=e.touches[0];if(Math.abs(touch.clientX-next.clientX)+Math.abs(touch.clientY-next.clientY)>3)moved=true;send({type:'scroll',...point(next),delta_y:touch.clientY-next.clientY});touch=next;e.preventDefault()},{passive:false});
 image.addEventListener('touchend',()=>{touch=undefined});
+const qrCode=new URL(location.href).searchParams.get('pair');
+if(qrCode){history.replaceState(null,'',location.pathname);pairWith(qrCode)}
 start();
 </script>
