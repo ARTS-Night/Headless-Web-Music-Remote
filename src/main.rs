@@ -355,8 +355,14 @@ async fn main() -> Result<()> {
             "Phone: no private LAN address detected; use this PC's trusted-LAN IPv4 address and port {host_port}"
         );
     }
-    println!("Pairing code: {code}\nQR pairing: run hwmr.exe --show-qr from another shell\nCDP: 127.0.0.1:{port} (loopback only)");
-    axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>()).await?;
+    println!(
+        "Pairing code: {code}\nQR pairing: run hwmr.exe --show-qr from another shell\nCDP: 127.0.0.1:{port} (loopback only)"
+    );
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -588,7 +594,9 @@ async fn pair(
     let mut auth = app.auth.lock().await;
     let valid_code = request.code.as_deref() == Some(&auth.code);
     let valid_nonce = if let Some(nonce) = &request.nonce {
-        auth.qr_nonce.as_ref().is_some_and(|qn| &qn.nonce == nonce && qn.expires_at > Instant::now())
+        auth.qr_nonce
+            .as_ref()
+            .is_some_and(|qn| &qn.nonce == nonce && qn.expires_at > Instant::now())
     } else {
         false
     };

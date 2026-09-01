@@ -320,7 +320,13 @@ function scanQr() {
 async function handleQrData(data) {
   try {
     const payload = JSON.parse(data);
-    if (payload.v !== 1 || !payload.host || !payload.port || !payload.nonce) {
+    const octets = typeof payload.host === 'string' ? payload.host.split('.').map(Number) : [];
+    const privateHost = octets.length === 4 && octets.every((value, index) =>
+      Number.isInteger(value) && value >= 0 && value <= 255 && String(value) === payload.host.split('.')[index]
+    ) && (octets[0] === 10 || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+      (octets[0] === 192 && octets[1] === 168) || (octets[0] === 169 && octets[1] === 254));
+    if (payload.v !== 1 || !privateHost || !Number.isInteger(payload.port) || payload.port < 1 || payload.port > 65535 ||
+        typeof payload.nonce !== 'string' || !/^[0-9a-f]{32}$/.test(payload.nonce)) {
       qrErr.textContent = 'This HWMR connection code uses an unsupported version or is invalid.';
       qrAnimationFrame = requestAnimationFrame(scanQr);
       return;

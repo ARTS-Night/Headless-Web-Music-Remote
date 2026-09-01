@@ -42,7 +42,7 @@ Host protections retained on `pwa-next`:
 - CDP remains loopback-only.
 - Pairing responses no longer show session tokens in the PWA diagnostic log.
 
-## Phase 1A: installable PWA shell — complete (pending physical-device validation)
+## Phase 1A/1B: installable PWA and QR pairing — implementation complete, device validation pending
 
 Implemented on `pwa-next`:
 
@@ -74,7 +74,10 @@ that ports all features from the stable embedded `web/index.html`:
 - Session expiry detection on WebSocket close.
 - `safe-area-inset-*` and `100dvh` mobile layout.
 - Service Worker registration (static shell only).
-- Camera diagnostic removed (QR camera is a separate future phase).
+- QR scanner uses the locally bundled jsQR 1.4.0 library; camera streams are
+  stopped on success, cancel, and permission failure.
+- QR payloads accept only HWMR version 1, private IPv4 Host addresses, valid
+  ports, and the expected one-time nonce format.
 
 Recent commits:
 
@@ -82,7 +85,8 @@ Recent commits:
 - `42d4581` — obsolete shell-cache cleanup.
 - `6ea6f13` — visible camera preview and explicit cleanup.
 - `371f4c8` — docs: record PWA development status.
-- *(next)* — production PWA client replacing PoC UI.
+- `b4806d7` — production PWA client, QR pairing, and UX hardening.
+- `69abf2a` — Phase 1B implementation review.
 
 ## Android validation status
 
@@ -102,7 +106,7 @@ Still to validate manually (physical device or emulator):
    JPEG display, Reload, reconnect after PWA close/reopen.
 3. Production viewer: tap, scroll, back/forward, tabs, URL/search, text, logout.
 4. Re-run invalid-token and wrong-Origin checks against final Host.
-5. Camera / QR — deferred until Phase 1B.
+5. Camera / QR — physical-device validation remains pending.
 
 ## Known test note
 
@@ -116,13 +120,13 @@ and CORS changes; it is not yet classified as a PWA regression.
   Local Network Access, pairing, control/frame WebSockets, JPEG display, reload,
   reconnect, and retained security. Code implementation is done; physical-device
   validation is the remaining gate.
-- Phase 1B (QR camera pairing) may start after the Phase 1A standalone runtime
-  gate passes on a physical device.
+- Phase 1B implementation exists, but its physical Android/iPhone validation
+  remains the next gate.
 
 ## Operating rules
 
 - Do not weaken pairing/authentication, Origin validation, CORS restrictions, or
   CDP loopback isolation for PWA work.
-- Do not add QR, host discovery, cloud relay, HTTPS on the Rust Host, or a
-  `v0.2.0` release in the current phase.
+- Do not add host discovery, cloud relay, HTTPS on the Rust Host, or a `v0.2.0`
+  release in the current phase.
 - Keep `main` and released `v0.1.x` artifacts immutable.
