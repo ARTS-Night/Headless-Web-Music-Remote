@@ -18,7 +18,7 @@ use axum::{
         State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     response::{Html, IntoResponse},
     routing::{get, post},
 };
@@ -31,6 +31,7 @@ use tokio::{
     time::sleep,
 };
 use tokio_tungstenite::tungstenite::Message as CdpMessage;
+use tower_http::cors::CorsLayer;
 use windows_sys::Win32::{
     Foundation::{CloseHandle, HANDLE, POINT},
     System::JobObjects::{
@@ -43,6 +44,7 @@ use windows_sys::Win32::{
 
 const VIEWPORT: &str = "430,932";
 const CDP_PORT: u16 = 9229;
+const PWA_ORIGIN: &str = "https://arts-night.github.io";
 const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Mobile Safari/537.36";
 
 struct BraveJob(HANDLE);
@@ -302,6 +304,12 @@ async fn main() -> Result<()> {
         .route("/tabs", get(tabs))
         .route("/ws/frame", get(frame_ws))
         .route("/ws/control", get(control_ws))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(PWA_ORIGIN.parse::<HeaderValue>().unwrap())
+                .allow_methods([Method::GET, Method::POST])
+                .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]),
+        )
         .with_state(app);
     let host_port = host_port();
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", host_port)).await?;
@@ -550,11 +558,33 @@ async fn tabs(State(app): State<App>, headers: HeaderMap) -> impl IntoResponse {
         Err(error) => (axum::http::StatusCode::BAD_GATEWAY, error.to_string()).into_response(),
     }
 }
-async fn frame_ws(ws: WebSocketUpgrade, State(app): State<App>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| frames(socket, app))
+fn ws_origin_allowed(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .is_none_or(|origin| origin == PWA_ORIGIN || origin.ends_with(&format!(":{}", host_port())))
 }
-async fn control_ws(ws: WebSocketUpgrade, State(app): State<App>) -> impl IntoResponse {
+async fn frame_ws(
+    ws: WebSocketUpgrade,
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    if !ws_origin_allowed(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    ws.on_upgrade(move |socket| frames(socket, app))
+        .into_response()
+}
+async fn control_ws(
+    ws: WebSocketUpgrade,
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    if !ws_origin_allowed(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     ws.on_upgrade(move |socket| controls(socket, app))
+        .into_response()
 }
 #[derive(Deserialize)]
 struct WsAuth {

@@ -1,0 +1,25 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HWMR PWA Connectivity Test</title>
+<style>body{max-width:680px;margin:24px auto;padding:0 16px;background:#111;color:#eee;font:16px system-ui}label,input,button{display:block;box-sizing:border-box;margin:8px 0}input,button{width:100%;padding:10px;font:inherit;border:0;border-radius:8px}input{background:#fff;color:#111}button{background:#2869b6;color:#fff}#log{white-space:pre-wrap;background:#1c1c1c;padding:12px;border-radius:8px;min-height:8em}img,video{display:block;max-width:100%;margin-top:12px;background:#000}</style>
+<h1>HWMR PWA Connectivity Test</h1>
+<label>Host IP<input id="host" inputmode="decimal" placeholder="192.168.1.100"></label>
+<label>Port<input id="port" inputmode="numeric" value="8787"></label>
+<label>Pairing Code<input id="code" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="abcdef"></label>
+<button id="http">Test HTTP</button><button id="camera">Test Camera</button><button id="pair">Pair</button><button id="control">Connect Control WS</button><button id="frame">Connect Frame WS</button><button id="reload">Send Reload</button>
+<p id="status"></p><pre id="log"></pre><img id="image" alt="Latest HWMR JPEG frame">
+<script>
+const $=id=>document.querySelector('#'+id),log=m=>{$('log').textContent+=`${new Date().toLocaleTimeString()} ${m}\n`};
+let token='',control,frames,frameCount=0;
+const base=()=>`http://${$('host').value.trim()}:${$('port').value.trim()}`;
+const wsBase=()=>base().replace('http','ws');
+$('status').textContent=`secureContext=${isSecureContext}; mediaDevices=${!!navigator.mediaDevices}; getUserMedia=${!!navigator.mediaDevices?.getUserMedia}`;
+async function request(path,options={}){const response=await fetch(base()+path,options);const text=await response.text();log(`${path}: HTTP ${response.status}${text?` ${text.slice(0,160)}`:''}`);return[response,text]}
+$('http').onclick=()=>request('/health').catch(e=>log(`HTTP error: ${e.message}`));
+$('camera').onclick=async()=>{try{const stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});stream.getTracks().forEach(track=>track.stop());log('Camera permission: granted and stream stopped')}catch(e){log(`Camera error: ${e.name}: ${e.message}`)}};
+$('pair').onclick=async()=>{try{const[r,text]=await request('/pair',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:$('code').value.trim()})});if(!r.ok)return;token=JSON.parse(text).token;log('Pairing: success (token retained only in memory)')}catch(e){log(`Pairing error: ${e.message}`)}};
+function connect(kind){if(!token)return log('Pair first');const ws=new WebSocket(`${wsBase()}/ws/${kind}`);ws.binaryType='blob';ws.onopen=()=>{log(`${kind} WS: open`);ws.send(JSON.stringify({type:'auth',token}))};ws.onclose=()=>log(`${kind} WS: closed`);ws.onerror=()=>log(`${kind} WS: error`);return ws}
+$('control').onclick=()=>{control=connect('control')};
+$('frame').onclick=()=>{frames=connect('frame');frames.onmessage=e=>{frameCount++;const old=$('image').src;$('image').src=URL.createObjectURL(e.data);if(old)URL.revokeObjectURL(old);log(`Frame: JPEG ${frameCount}, ${e.data.size} bytes`)}};
+$('reload').onclick=()=>{if(!control||control.readyState!==WebSocket.OPEN)return log('Control WS is not open');control.send(JSON.stringify({type:'reload'}));log('Reload sent')};
+</script>
