@@ -319,13 +319,12 @@ async fn main() -> Result<()> {
 
 async fn launch_brave(brave: &Path, profile: &Path) -> Result<(u16, BraveJob)> {
     let port_file = profile.join("DevToolsActivePort");
-    if port_file.exists() {
-        bail!(
-            "Existing DevToolsActivePort found; profile may already be owned. Stop its Brave instance before starting HWMR"
-        )
-    }
     let port_guard = std::net::TcpListener::bind(("127.0.0.1", CDP_PORT))
         .with_context(|| format!("CDP loopback port {CDP_PORT} is already in use"))?;
+    if port_file.exists() {
+        std::fs::remove_file(&port_file)
+            .with_context(|| format!("remove stale {}", port_file.display()))?;
+    }
     drop(port_guard);
     let mut child = Command::new(brave)
         .args([
