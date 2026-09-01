@@ -1,4 +1,4 @@
-const CACHE = 'hwmr-pwa-shell-v3';
+const CACHE = 'hwmr-pwa-shell-v4';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/hwmr.svg', './jsQR.min.js'];
 self.addEventListener('install', event =>
   event.waitUntil(
