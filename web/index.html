@@ -29,8 +29,9 @@ const app=document.querySelector('#app'),viewer=document.querySelector('#viewer'
 let control,frames,token=localStorage.hwmrToken,composing=false,composed='',touch,moved=false,viewport='';
 const auth=ws=>ws.send(JSON.stringify({type:'auth',token}));
 const send=value=>control?.send(JSON.stringify(value));
+const viewerSize=()=>{const r=viewer.getBoundingClientRect();return[ Math.round(r.width),Math.round(r.height) ]};
 const fit=()=>{
-  const r=viewer.getBoundingClientRect(),width=Math.round(r.width),height=Math.round(r.height),next=`${width}x${height}`;
+  const [width,height]=viewerSize(),next=`${width}x${height}`;
   if(width&&height&&next!==viewport&&control?.readyState===WebSocket.OPEN){viewport=next;send({type:'resize',width,height})}
 };
 new ResizeObserver(fit).observe(viewer);
@@ -40,7 +41,7 @@ function start(){
   pair.hidden=true;app.hidden=false;
   control=new WebSocket(`ws://${location.host}/ws/control`);
   frames=new WebSocket(`ws://${location.host}/ws/frame`);frames.binaryType='blob';
-  control.onopen=()=>{auth(control);fit()};frames.onopen=()=>auth(frames);
+  control.onopen=()=>{auth(control);requestAnimationFrame(fit)};frames.onopen=()=>auth(frames);
   control.onclose=expired;frames.onclose=expired;
   control.onmessage=e=>{const r=JSON.parse(e.data);if(r.ok&&r.result?.text_input)text.focus()};
   frames.onmessage=e=>{const old=image.src;image.src=URL.createObjectURL(e.data);if(old)URL.revokeObjectURL(old)};

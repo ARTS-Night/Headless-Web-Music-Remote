@@ -43,6 +43,7 @@ use windows_sys::Win32::{
 
 const VIEWPORT: &str = "430,932";
 const CDP_PORT: u16 = 9229;
+const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Mobile Safari/537.36";
 
 struct BraveJob(HANDLE);
 
@@ -89,7 +90,9 @@ fn host_port() -> u16 {
 }
 
 fn device_metrics(width: u32, height: u32) -> Value {
-    json!({"width":width.clamp(1, 1920),"height":height.clamp(1, 2400),"deviceScaleFactor":1,"mobile":false})
+    let width = width.clamp(1, 1920);
+    let height = height.clamp(1, 2400);
+    json!({"width":width,"height":height,"screenWidth":width,"screenHeight":height,"deviceScaleFactor":1,"mobile":true})
 }
 
 fn profile_dir() -> Result<PathBuf> {
@@ -332,7 +335,7 @@ async fn launch_brave(brave: &Path, profile: &Path) -> Result<(u16, BraveJob)> {
             "--remote-debugging-address=127.0.0.1",
             "--remote-debugging-port=9229",
             "--no-first-run",
-            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+            &format!("--user-agent={MOBILE_USER_AGENT}"),
             &format!("--user-data-dir={}", profile.display()),
             &format!("--window-size={VIEWPORT}"),
             "about:blank",
@@ -817,7 +820,7 @@ fn random_hex(bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::navigation_url;
+    use super::{device_metrics, navigation_url};
     #[test]
     fn url_or_search() {
         assert_eq!(navigation_url("https://example.com"), "https://example.com");
@@ -825,5 +828,12 @@ mod tests {
             navigation_url("hello world"),
             "https://www.google.com/search?q=hello+world"
         );
+    }
+    #[test]
+    fn mobile_viewport_metrics() {
+        let metrics = device_metrics(390, 760);
+        assert_eq!(metrics["mobile"], true);
+        assert_eq!(metrics["width"], 390);
+        assert_eq!(metrics["height"], 760);
     }
 }
