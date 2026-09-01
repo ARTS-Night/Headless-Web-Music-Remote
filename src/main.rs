@@ -578,10 +578,18 @@ async fn tabs(State(app): State<App>, headers: HeaderMap) -> impl IntoResponse {
     }
 }
 fn ws_origin_allowed(headers: &HeaderMap) -> bool {
-    headers
+    let Some(origin) = headers
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
-        .is_none_or(|origin| origin == PWA_ORIGIN || origin.ends_with(&format!(":{}", host_port())))
+    else {
+        return true;
+    };
+
+    origin == PWA_ORIGIN
+        || headers
+            .get(header::HOST)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|host| origin == format!("http://{host}"))
 }
 async fn frame_ws(
     ws: WebSocketUpgrade,
