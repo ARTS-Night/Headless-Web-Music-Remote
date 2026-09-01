@@ -1,0 +1,9 @@
+{
+  "name": "Headless Web Music Remote",
+  "short_name": "HWMR",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#111111",
+  "theme_color": "#111111",
+  "icons": [{ "src": "icons/hwmr.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

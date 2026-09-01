@@ -1,6 +1,8 @@
 <!doctype html>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>HWMR PWA Connectivity Test</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#111111">
 <style>body{max-width:680px;margin:24px auto;padding:0 16px;background:#111;color:#eee;font:16px system-ui}label,input,button{display:block;box-sizing:border-box;margin:8px 0}input,button{width:100%;padding:10px;font:inherit;border:0;border-radius:8px}input{background:#fff;color:#111}button{background:#2869b6;color:#fff}#log{white-space:pre-wrap;background:#1c1c1c;padding:12px;border-radius:8px;min-height:8em}img,video{display:block;max-width:100%;margin-top:12px;background:#000}</style>
 <h1>HWMR PWA Connectivity Test</h1>
 <label>Host IP<input id="host" inputmode="decimal" placeholder="192.168.1.100"></label>
@@ -22,4 +24,5 @@ function connect(kind){if(!token)return log('Pair first');const ws=new WebSocket
 $('control').onclick=()=>{control=connect('control')};
 $('frame').onclick=()=>{frames=connect('frame');frames.onmessage=e=>{frameCount++;const old=$('image').src;$('image').src=URL.createObjectURL(e.data);if(old)URL.revokeObjectURL(old);log(`Frame: JPEG ${frameCount}, ${e.data.size} bytes`)}};
 $('reload').onclick=()=>{if(!control||control.readyState!==WebSocket.OPEN)return log('Control WS is not open');control.send(JSON.stringify({type:'reload'}));log('Reload sent')};
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(e=>log(`Service worker error: ${e.message}`));
 </script>
