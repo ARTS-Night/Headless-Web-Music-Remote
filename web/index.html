@@ -14,15 +14,18 @@ input{width:min(65vw,320px)}
 #pair{position:fixed;inset:0;display:grid;place-content:center;gap:10px;text-align:center;z-index:1}
 #pair input{width:220px}#pair-error{color:#ff8b8b}
 #text{position:fixed;top:-9999px;left:-9999px;opacity:0;pointer-events:none}
+#tab-list{position:fixed;z-index:2;left:12px;right:12px;bottom:max(72px,calc(60px + env(safe-area-inset-bottom)));max-height:50dvh;overflow:auto;padding:8px;background:#1c1c1c;border-radius:12px;box-shadow:0 8px 28px #0009}
+#tab-list button{display:block;width:100%;margin:4px 0;border-radius:9px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#tab-list button.active{background:#4a6fa5}
 </style>
 <div id="pair"><h1>HWMR</h1><form><input autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="6" placeholder="Pairing code" aria-label="Pairing code"><button>Pair</button></form><span id="pair-error"></span></div>
 <main id="app" hidden>
   <form id="go"><input placeholder="URL or search" aria-label="URL or search"><button>Go</button></form>
   <div id="viewer"><img id="screen" alt="Remote Brave screen"><textarea id="text" aria-label="Remote text input"></textarea></div>
   <div id="bar"><button data-action="back">←</button><button id="tabs">▢</button><button data-key="Space">▶</button><button data-action="reload">↻</button><button data-action="forward">→</button></div>
+  <section id="tab-list" hidden aria-label="Tabs"></section>
 </main>
 <script>
-const app=document.querySelector('#app'),viewer=document.querySelector('#viewer'),image=document.querySelector('#screen'),pair=document.querySelector('#pair'),error=document.querySelector('#pair-error'),text=document.querySelector('#text');
+const app=document.querySelector('#app'),viewer=document.querySelector('#viewer'),image=document.querySelector('#screen'),pair=document.querySelector('#pair'),error=document.querySelector('#pair-error'),text=document.querySelector('#text'),tabList=document.querySelector('#tab-list');
 let control,frames,token=localStorage.hwmrToken,composing=false,composed='',touch,moved=false,viewport='';
 const auth=ws=>ws.send(JSON.stringify({type:'auth',token}));
 const send=value=>control?.send(JSON.stringify(value));
@@ -63,8 +66,7 @@ document.querySelector('[data-key]').onclick=e=>send({type:'key',key:e.currentTa
 document.querySelector('#go').onsubmit=e=>{e.preventDefault();const field=e.currentTarget.querySelector('input'),value=field.value.trim();field.blur();if(value)send({type:'go',text:value})};
 document.querySelector('#tabs').onclick=async()=>{
   const r=await fetch('/tabs',{headers:{authorization:`Bearer ${token}`}});if(r.status===401)return expired();
-  const tabs=await r.json(),pick=prompt(tabs.items.map((t,i)=>`${i+1}. ${t.active?'▶ ':''}${t.title||t.url}`).join('\n')),tab=tabs.items[Number(pick)-1];
-  if(tab)send({type:'select_tab',id:tab.id});
+  const tabs=await r.json();tabList.replaceChildren(...tabs.items.map(t=>{const b=document.createElement('button');b.textContent=`${t.active?'● ':''}${t.title||t.url}`;b.title=t.url;b.className=t.active?'active':'';b.onclick=()=>{tabList.hidden=true;send({type:'select_tab',id:t.id})};return b}));tabList.hidden=!tabList.hidden;
 };
 image.addEventListener('touchstart',e=>{touch=e.touches[0];moved=false},{passive:true});
 image.addEventListener('touchmove',e=>{if(!touch)return;const next=e.touches[0];if(Math.abs(touch.clientX-next.clientX)+Math.abs(touch.clientY-next.clientY)>3)moved=true;send({type:'scroll',...point(next),delta_y:touch.clientY-next.clientY});touch=next;e.preventDefault()},{passive:false});

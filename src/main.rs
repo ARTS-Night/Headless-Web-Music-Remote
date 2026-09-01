@@ -631,6 +631,29 @@ async fn select_tab(app: &App, id: &str) -> Result<Value> {
     *app.active.lock().await = next;
     Ok(json!({"selected":id}))
 }
+async fn navigate_history(cdp: &Cdp, offset: i64) -> Result<Value> {
+    let history = cdp.command("Page.getNavigationHistory", json!({})).await?;
+    let result = &history["result"];
+    let entries = result["entries"]
+        .as_array()
+        .context("CDP returned no navigation history")?;
+    let current = result["currentIndex"]
+        .as_i64()
+        .context("CDP returned no current navigation entry")?;
+    let next = current + offset;
+    let entry = entries
+        .get(
+            usize::try_from(next)
+                .ok()
+                .context("no navigation history entry")?,
+        )
+        .context("no navigation history entry")?;
+    cdp.command(
+        "Page.navigateToHistoryEntry",
+        json!({"entryId":entry["id"]}),
+    )
+    .await
+}
 async fn controls(mut socket: WebSocket, app: App) {
     if !authenticate(&mut socket, &app).await {
         return;
@@ -688,8 +711,8 @@ async fn controls(mut socket: WebSocket, app: App) {
                             Err(error) => Err(error),
                         }
                     }
-                    Ok(Control::Back) => cdp.command("Page.goBack", json!({})).await,
-                    Ok(Control::Forward) => cdp.command("Page.goForward", json!({})).await,
+                    Ok(Control::Back) => navigate_history(&cdp, -1).await,
+                    Ok(Control::Forward) => navigate_history(&cdp, 1).await,
                     Ok(Control::Reload) => cdp.command("Page.reload", json!({})).await,
                     Ok(Control::Navigate { url }) => {
                         cdp.command("Page.navigate", json!({"url":url})).await
