@@ -7,9 +7,9 @@ html,body{margin:0;background:#111;color:#eee;font:14px system-ui;height:100%;he
 #app{box-sizing:border-box;display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:8px;height:100dvh;padding:max(12px,env(safe-area-inset-top)) 12px max(12px,env(safe-area-inset-bottom))}
 #viewer{min-width:0;min-height:0;overflow:hidden;background:#000;border-radius:12px;touch-action:none}
 #screen{display:block;width:100%;height:100%;object-fit:fill}
-#bar,#go{display:flex;gap:8px;justify-content:center}
+#bar,#go{display:flex;gap:8px;justify-content:center}#bar{flex-wrap:wrap}
 #go input{flex:1;min-width:0}
-input,button{box-sizing:border-box;border:0;border-radius:18px;padding:9px 13px;background:#292929;color:#fff}
+input,button{box-sizing:border-box;border:0;border-radius:18px;padding:9px 13px;background:#292929;color:#fff}input,textarea{font-size:16px}
 input{width:min(65vw,320px)}
 #pair{position:fixed;inset:0;display:grid;place-content:center;gap:10px;text-align:center;z-index:1}
 #pair input{width:220px}#pair-error{color:#ff8b8b}
@@ -21,7 +21,7 @@ input{width:min(65vw,320px)}
 <main id="app" hidden>
   <form id="go"><input placeholder="URL or search" aria-label="URL or search"><button>Go</button></form>
   <div id="viewer"><img id="screen" alt="Remote Brave screen"><textarea id="text" aria-label="Remote text input"></textarea></div>
-  <div id="bar"><button data-action="back">←</button><button id="tabs">▢</button><button data-key="Space">▶</button><button data-action="reload">↻</button><button data-action="forward">→</button></div>
+  <div id="bar"><button data-action="back">←</button><button id="tabs">▢</button><button data-key="Space">▶</button><button data-action="reload">↻</button><button data-action="forward">→</button><button id="logout" type="button">Log out</button></div>
   <section id="tab-list" hidden aria-label="Tabs"></section>
 </main>
 <script>
@@ -35,7 +35,8 @@ const fit=()=>{
   if(width&&height&&next!==viewport&&control?.readyState===WebSocket.OPEN){viewport=next;send({type:'resize',width,height})}
 };
 new ResizeObserver(fit).observe(viewer);
-const expired=()=>{localStorage.removeItem('hwmrToken');token='';pair.hidden=false;app.hidden=true;error.textContent='Session expired. Pair again.'};
+const showPairing=message=>{localStorage.removeItem('hwmrToken');token='';tabList.hidden=true;pair.hidden=false;app.hidden=true;error.textContent=message};
+const expired=()=>showPairing('Session expired. Pair again.');
 function start(){
   if(!token)return;
   pair.hidden=true;app.hidden=false;
@@ -64,6 +65,10 @@ text.oninput=e=>{if(!composing&&e.data){if(e.data!==composed)send({type:'insert_
 text.onkeydown=e=>{if(['Backspace','Enter','ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();send({type:'key',key:e.key});text.value=''}};
 document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>send({type:b.dataset.action}));
 document.querySelector('[data-key]').onclick=e=>send({type:'key',key:e.currentTarget.dataset.key});
+document.querySelector('#logout').onclick=async()=>{
+  const r=await fetch('/logout',{method:'POST',headers:{authorization:`Bearer ${token}`}});if(!r.ok)return expired();
+  control.onclose=frames.onclose=null;control.close();frames.close();showPairing('Logged out. Check the HWMR window for the new pairing code.');
+};
 document.querySelector('#go').onsubmit=e=>{e.preventDefault();const field=e.currentTarget.querySelector('input'),value=field.value.trim();field.blur();if(value)send({type:'go',text:value})};
 document.querySelector('#tabs').onclick=async()=>{
   const r=await fetch('/tabs',{headers:{authorization:`Bearer ${token}`}});if(r.status===401)return expired();

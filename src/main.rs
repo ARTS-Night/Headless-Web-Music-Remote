@@ -296,6 +296,7 @@ async fn main() -> Result<()> {
         .route("/", get(index))
         .route("/health", get(health))
         .route("/pair", post(pair))
+        .route("/logout", post(logout))
         .route("/audio", get(audio_status))
         .route("/isolation", get(isolation_status))
         .route("/tabs", get(tabs))
@@ -493,6 +494,16 @@ async fn pair(
     auth.code = random_hex(3);
     auth.token = Some(token.clone());
     axum::Json(json!({"ok":true,"token":token})).into_response()
+}
+async fn logout(State(app): State<App>, headers: HeaderMap) -> impl IntoResponse {
+    if !authorized(&headers, &app).await {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let mut auth = app.auth.lock().await;
+    auth.code = random_hex(3);
+    auth.token = None;
+    println!("Logged out. New pairing code: {}", auth.code);
+    axum::Json(json!({"ok": true})).into_response()
 }
 async fn authorized(headers: &HeaderMap, app: &App) -> bool {
     let Some(token) = headers
