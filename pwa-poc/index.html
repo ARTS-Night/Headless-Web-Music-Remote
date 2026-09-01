@@ -14,7 +14,7 @@ let token='',control,frames,frameCount=0;
 const base=()=>`http://${$('host').value.trim()}:${$('port').value.trim()}`;
 const wsBase=()=>base().replace('http','ws');
 $('status').textContent=`secureContext=${isSecureContext}; mediaDevices=${!!navigator.mediaDevices}; getUserMedia=${!!navigator.mediaDevices?.getUserMedia}`;
-async function request(path,options={}){const response=await fetch(base()+path,options);const text=await response.text();log(`${path}: HTTP ${response.status}${text?` ${text.slice(0,160)}`:''}`);return[response,text]}
+async function request(path,options={}){const response=await fetch(new Request(base()+path,{...options,targetAddressSpace:'local'}));const text=await response.text();log(`${path}: HTTP ${response.status}${text?` ${text.slice(0,160)}`:''}`);return[response,text]}
 $('http').onclick=()=>request('/health').catch(e=>log(`HTTP error: ${e.message}`));
 $('camera').onclick=async()=>{try{const stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});stream.getTracks().forEach(track=>track.stop());log('Camera permission: granted and stream stopped')}catch(e){log(`Camera error: ${e.name}: ${e.message}`)}};
 $('pair').onclick=async()=>{try{const[r,text]=await request('/pair',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:$('code').value.trim()})});if(!r.ok)return;token=JSON.parse(text).token;log('Pairing: success (token retained only in memory)')}catch(e){log(`Pairing error: ${e.message}`)}};

@@ -14,12 +14,14 @@ use std::{
 use anyhow::{Context, Result, bail};
 use axum::{
     Router,
+    body::Body,
     extract::{
         State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
-    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
-    response::{Html, IntoResponse},
+    http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header},
+    middleware::{self, Next},
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
 use base64::Engine;
@@ -45,6 +47,22 @@ use windows_sys::Win32::{
 const VIEWPORT: &str = "430,932";
 const CDP_PORT: u16 = 9229;
 const PWA_ORIGIN: &str = "https://arts-night.github.io";
+
+async fn local_network_access_header(request: Request<Body>, next: Next) -> Response {
+    let pwa_request = request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        == Some(PWA_ORIGIN);
+    let mut response = next.run(request).await;
+    if pwa_request {
+        response.headers_mut().insert(
+            "Access-Control-Allow-Private-Network",
+            HeaderValue::from_static("true"),
+        );
+    }
+    response
+}
 const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Mobile Safari/537.36";
 
 struct BraveJob(HANDLE);
@@ -310,6 +328,7 @@ async fn main() -> Result<()> {
                 .allow_methods([Method::GET, Method::POST])
                 .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]),
         )
+        .layer(middleware::from_fn(local_network_access_header))
         .with_state(app);
     let host_port = host_port();
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", host_port)).await?;
