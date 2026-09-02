@@ -200,7 +200,7 @@ function parseBootstrap(data) {
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 function authHeader() { return { authorization: `Bearer ${token}` }; }
-const wsSend = value => control?.send(JSON.stringify(value));
+const wsSend = value => { if (control?.readyState === WebSocket.OPEN) control.send(JSON.stringify(value)); };
 
 // ── Viewport resize propagation ───────────────────────────────────────────────
 function fit() {

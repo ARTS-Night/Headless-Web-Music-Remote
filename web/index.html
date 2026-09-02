@@ -29,7 +29,7 @@ input{width:min(65vw,320px)}
 const app=document.querySelector('#app'),viewer=document.querySelector('#viewer'),image=document.querySelector('#screen'),pair=document.querySelector('#pair'),error=document.querySelector('#pair-error'),text=document.querySelector('#text'),tabList=document.querySelector('#tab-list');
 let control,frames,token=localStorage.hwmrToken,composing=false,suppressInput=false,remoteEditable=false,nativeTouch=null,pendingTouchMove=null,touchMoveFrame=0,suppressClick=false,viewport='';
 const auth=ws=>ws.send(JSON.stringify({type:'auth',token}));
-const send=value=>control?.send(JSON.stringify(value));
+const send=value=>{if(control?.readyState===WebSocket.OPEN)control.send(JSON.stringify(value))};
 const viewerSize=()=>{const r=viewer.getBoundingClientRect();return[ Math.round(r.width),Math.round(r.height) ]};
 const fit=()=>{
   const [width,height]=viewerSize(),next=`${width}x${height}`;
