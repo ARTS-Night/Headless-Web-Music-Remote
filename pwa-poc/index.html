@@ -9,6 +9,7 @@ html,body{margin:0;background:#111;color:#eee;font:14px system-ui;height:100%;he
 /* ── Connect screen ── */
 #connect{position:fixed;inset:0;display:grid;place-content:center;gap:10px;text-align:center;z-index:10;padding:24px;box-sizing:border-box}
 #connect h1{margin:0 0 8px}
+#version{margin:-6px 0 8px;color:#888;font-size:12px}
 #connect label{display:block;text-align:left;font-size:12px;color:#aaa;margin:4px 0 1px}
 #connect input{display:block;width:100%;box-sizing:border-box;font-size:16px}
 #connect-form{display:grid;gap:0;max-width:320px;width:100%}
@@ -38,6 +39,7 @@ button:active{opacity:.75}
 <!-- Connect / Pairing screen -->
 <div id="connect">
   <h1>HWMR</h1>
+  <div id="version">v0.1.9-beta.2</div>
   <div id="connect-form">
     <div id="connect-last" hidden></div>
     <button id="btn-scan" type="button" style="background:#5b9cff; color:#111; margin-bottom:12px;">Scan QR</button>
