@@ -136,6 +136,8 @@ let remoteEditable = false;
 let nativeTouch = null;
 let pendingTouchMove = null;
 let touchMoveFrame = 0;
+let lastTouchMoveSentAt = 0;
+const touchMoveInterval = 1000 / 45;
 let suppressClick = false;
 let viewport     = '';
 let currentBase  = '';   // http://HOST:PORT
@@ -430,9 +432,15 @@ image.onclick = e => {
 };
 image.onwheel = e => { e.preventDefault(); wsSend({ type: 'scroll', ...point(e), delta_y: e.deltaY }); };
 
-const flushTouchMove = () => {
-  if (pendingTouchMove && nativeTouch) { wsSend(pendingTouchMove); pendingTouchMove = null; }
+const flushTouchMove = (force = false) => {
   touchMoveFrame = 0;
+  if (!pendingTouchMove || !nativeTouch) return;
+  const now = performance.now();
+  if (!force && lastTouchMoveSentAt && now - lastTouchMoveSentAt < touchMoveInterval) {
+    touchMoveFrame = requestAnimationFrame(() => flushTouchMove(false));
+    return;
+  }
+  wsSend(pendingTouchMove); pendingTouchMove = null; lastTouchMoveSentAt = now;
 };
 const queueTouchMove = move => {
   pendingTouchMove = move;
@@ -442,6 +450,7 @@ image.addEventListener('pointerdown', e => {
   if (e.pointerType !== 'touch' || !e.isPrimary || nativeTouch) return;
   e.preventDefault();
   nativeTouch = { id: e.pointerId };
+  lastTouchMoveSentAt = 0;
   suppressClick = false;
   if (image.setPointerCapture) image.setPointerCapture(e.pointerId);
   wsSend({ type: 'touch_start', ...point(e), touch_id: e.pointerId });
@@ -454,12 +463,15 @@ image.addEventListener('pointermove', e => {
 const finishTouch = (e, cancelled) => {
   if (!nativeTouch || e.pointerId !== nativeTouch.id) return;
   e.preventDefault();
-  flushTouchMove();
+  if (touchMoveFrame) cancelAnimationFrame(touchMoveFrame);
+  touchMoveFrame = 0;
+  flushTouchMove(true);
   const id = nativeTouch.id;
   wsSend({ type: cancelled ? 'touch_cancel' : 'touch_end', ...point(e), touch_id: id });
   if (image.releasePointerCapture) image.releasePointerCapture(id);
   nativeTouch = null;
   pendingTouchMove = null;
+  lastTouchMoveSentAt = 0;
   suppressClick = true;
   setTimeout(() => { suppressClick = false; }, 500);
 };

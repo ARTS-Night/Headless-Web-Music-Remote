@@ -27,7 +27,8 @@ input{width:min(65vw,320px)}
 </main>
 <script>
 const app=document.querySelector('#app'),viewer=document.querySelector('#viewer'),image=document.querySelector('#screen'),pair=document.querySelector('#pair'),error=document.querySelector('#pair-error'),text=document.querySelector('#text'),tabList=document.querySelector('#tab-list');
-let control,frames,token=localStorage.hwmrToken,composing=false,suppressInput=false,remoteEditable=false,nativeTouch=null,pendingTouchMove=null,touchMoveFrame=0,suppressClick=false,viewport='';
+let control,frames,token=localStorage.hwmrToken,composing=false,suppressInput=false,remoteEditable=false,nativeTouch=null,pendingTouchMove=null,touchMoveFrame=0,suppressClick=false,viewport='',lastTouchMoveSentAt=0;
+const touchMoveInterval=1000/45;
 const auth=ws=>ws.send(JSON.stringify({type:'auth',token}));
 const send=value=>{if(control?.readyState===WebSocket.OPEN)control.send(JSON.stringify(value))};
 const viewerSize=()=>{const r=viewer.getBoundingClientRect();return[ Math.round(r.width),Math.round(r.height) ]};
@@ -92,11 +93,11 @@ document.querySelector('#tabs').onclick=async()=>{
   const r=await fetch('/tabs',{headers:{authorization:`Bearer ${token}`}});if(r.status===401)return expired();
   const tabs=await r.json();tabList.replaceChildren(...tabs.items.map(t=>{const b=document.createElement('button');b.textContent=`${t.active?'● ':''}${t.title||t.url}`;b.title=t.url;b.className=t.active?'active':'';b.onclick=()=>{tabList.hidden=true;send({type:'select_tab',id:t.id})};return b}));tabList.hidden=!tabList.hidden;
 };
-const flushTouchMove=()=>{if(pendingTouchMove&&nativeTouch){send(pendingTouchMove);pendingTouchMove=null}touchMoveFrame=0};
+const flushTouchMove=(force=false)=>{touchMoveFrame=0;if(!pendingTouchMove||!nativeTouch)return;const now=performance.now();if(!force&&lastTouchMoveSentAt&&now-lastTouchMoveSentAt<touchMoveInterval){touchMoveFrame=requestAnimationFrame(()=>flushTouchMove(false));return}send(pendingTouchMove);pendingTouchMove=null;lastTouchMoveSentAt=now};
 const queueTouchMove=move=>{pendingTouchMove=move;if(!touchMoveFrame)touchMoveFrame=requestAnimationFrame(flushTouchMove)};
 image.addEventListener('pointerdown',e=>{
   if(e.pointerType!=='touch'||!e.isPrimary||nativeTouch)return;
-  e.preventDefault();nativeTouch={id:e.pointerId};suppressClick=false;
+  e.preventDefault();nativeTouch={id:e.pointerId};lastTouchMoveSentAt=0;suppressClick=false;
   if(image.setPointerCapture)image.setPointerCapture(e.pointerId);
   send({type:'touch_start',...point(e),touch_id:e.pointerId});
 },{passive:false});
@@ -106,8 +107,8 @@ image.addEventListener('pointermove',e=>{
 },{passive:false});
 const finishTouch=(e,cancelled)=>{
   if(!nativeTouch||e.pointerId!==nativeTouch.id)return;
-  e.preventDefault();flushTouchMove();const id=nativeTouch.id,coords=point(e);send({type:cancelled?'touch_cancel':'touch_end',...coords,touch_id:id});
-  if(image.releasePointerCapture)image.releasePointerCapture(id);nativeTouch=null;pendingTouchMove=null;suppressClick=true;setTimeout(()=>{suppressClick=false},500);
+  e.preventDefault();if(touchMoveFrame)cancelAnimationFrame(touchMoveFrame);touchMoveFrame=0;flushTouchMove(true);const id=nativeTouch.id,coords=point(e);send({type:cancelled?'touch_cancel':'touch_end',...coords,touch_id:id});
+  if(image.releasePointerCapture)image.releasePointerCapture(id);nativeTouch=null;pendingTouchMove=null;lastTouchMoveSentAt=0;suppressClick=true;setTimeout(()=>{suppressClick=false},500);
 };
 image.addEventListener('pointerup',e=>finishTouch(e,false),{passive:false});
 image.addEventListener('pointercancel',e=>finishTouch(e,true),{passive:false});
