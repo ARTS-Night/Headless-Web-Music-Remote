@@ -96,6 +96,9 @@ Recent commits:
 - `6ea6f13` — visible camera preview and explicit cleanup.
 - `371f4c8` — docs: record PWA development status.
 - `b4806d7` — production PWA client, QR pairing, and UX hardening.
+- `a99468d` — Safari local-controller fallback with fragment nonce bootstrap.
+- `8329522` — HTTPS QR deep links, automatic bootstrap, and stable error-code
+  documentation.
 - `69abf2a` — Phase 1B implementation review.
 
 ## Android validation status
