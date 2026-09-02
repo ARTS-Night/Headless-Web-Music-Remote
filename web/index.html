@@ -106,7 +106,7 @@ image.addEventListener('pointermove',e=>{
 },{passive:false});
 const finishTouch=(e,cancelled)=>{
   if(!nativeTouch||e.pointerId!==nativeTouch.id)return;
-  e.preventDefault();flushTouchMove();const id=nativeTouch.id;send({type:cancelled?'touch_cancel':'touch_end',touch_id:id});
+  e.preventDefault();flushTouchMove();const id=nativeTouch.id,coords=point(e);send({type:cancelled?'touch_cancel':'touch_end',...coords,touch_id:id});
   if(image.releasePointerCapture)image.releasePointerCapture(id);nativeTouch=null;pendingTouchMove=null;suppressClick=true;setTimeout(()=>{suppressClick=false},500);
 };
 image.addEventListener('pointerup',e=>finishTouch(e,false),{passive:false});

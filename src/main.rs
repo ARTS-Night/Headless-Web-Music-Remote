@@ -245,7 +245,7 @@ enum Control {
     Scroll { x: f64, y: f64, delta_y: f64 },
     TouchStart { x: f64, y: f64, touch_id: u32 },
     TouchMove { x: f64, y: f64, touch_id: u32 },
-    TouchEnd { touch_id: u32 },
+    TouchEnd { x: f64, y: f64, touch_id: u32 },
     TouchCancel { touch_id: u32 },
     Resize { width: u32, height: u32 },
     Back,
@@ -870,6 +870,21 @@ async fn dispatch_touch(
     cdp.command("Input.dispatchTouchEvent", params).await
 }
 
+async fn editable_at(cdp: &Cdp, app: &App, x: f64, y: f64) -> Result<Value> {
+    if !x.is_finite() || !y.is_finite() {
+        bail!("invalid touch coordinates");
+    }
+    let (width, height) = *app.viewport.lock().await;
+    let x = x.clamp(0.0, width as f64);
+    let y = y.clamp(0.0, height as f64);
+    cdp.command(
+        "Runtime.evaluate",
+        json!({"expression":format!("(()=>{{const e=document.elementFromPoint({x},{y});return !!e&&(e.matches('input,textarea')||e.isContentEditable)}})()"),"returnByValue":true}),
+    )
+    .await
+    .map(|hit| json!({"text_input":hit["result"]["result"]["value"].as_bool().unwrap_or(false)}))
+}
+
 async fn controls(mut socket: WebSocket, app: App) {
     if !authenticate(&mut socket, &app).await {
         return;
@@ -911,8 +926,11 @@ async fn controls(mut socket: WebSocket, app: App) {
                     Ok(Control::TouchMove { x, y, touch_id }) => {
                         dispatch_touch(&cdp, &app, "touchMove", Some((x, y)), touch_id).await
                     }
-                    Ok(Control::TouchEnd { touch_id }) => {
-                        dispatch_touch(&cdp, &app, "touchEnd", None, touch_id).await
+                    Ok(Control::TouchEnd { x, y, touch_id }) => {
+                        match dispatch_touch(&cdp, &app, "touchEnd", None, touch_id).await {
+                            Ok(_) => editable_at(&cdp, &app, x, y).await,
+                            Err(error) => Err(error),
+                        }
                     }
                     Ok(Control::TouchCancel { touch_id }) => {
                         dispatch_touch(&cdp, &app, "touchCancel", None, touch_id).await
@@ -1098,8 +1116,12 @@ mod tests {
             Ok(Control::TouchStart { touch_id: 9, .. })
         ));
         assert!(matches!(
-            serde_json::from_str::<Control>(r#"{"type":"touch_end","touch_id":9}"#),
-            Ok(Control::TouchEnd { touch_id: 9 })
+            serde_json::from_str::<Control>(r#"{"type":"touch_end","x":3,"y":4,"touch_id":9}"#),
+            Ok(Control::TouchEnd {
+                x: 3.0,
+                y: 4.0,
+                touch_id: 9
+            })
         ));
     }
 }

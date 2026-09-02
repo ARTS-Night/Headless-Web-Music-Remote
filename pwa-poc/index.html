@@ -456,7 +456,7 @@ const finishTouch = (e, cancelled) => {
   e.preventDefault();
   flushTouchMove();
   const id = nativeTouch.id;
-  wsSend({ type: cancelled ? 'touch_cancel' : 'touch_end', touch_id: id });
+  wsSend({ type: cancelled ? 'touch_cancel' : 'touch_end', ...point(e), touch_id: id });
   if (image.releasePointerCapture) image.releasePointerCapture(id);
   nativeTouch = null;
   pendingTouchMove = null;
