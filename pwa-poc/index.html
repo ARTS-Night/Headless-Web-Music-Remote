@@ -25,8 +25,8 @@ button:active{opacity:.75}
 #screen{display:block;width:100%;height:100%;object-fit:fill}
 #bar,#go{display:flex;gap:8px;justify-content:center}#bar{flex-wrap:wrap}
 #go input{flex:1;min-width:0}
-/* ── Off-screen text bridge ── */
-#text{position:fixed;top:-9999px;left:-9999px;opacity:0;pointer-events:none}
+/* ── Mobile-friendly text bridge: focusable without shifting the layout ── */
+#text{position:fixed;left:50%;bottom:0;width:1px;height:1px;padding:0;border:0;opacity:.01;background:transparent;color:transparent;caret-color:transparent;z-index:3}
 /* ── Tab overlay ── */
 #tab-list{position:fixed;z-index:2;left:12px;right:12px;bottom:max(72px,calc(60px + env(safe-area-inset-bottom)));max-height:50dvh;overflow:auto;padding:8px;background:#1c1c1c;border-radius:12px;box-shadow:0 8px 28px #0009}
 #tab-list button{display:block;width:100%;margin:4px 0;border-radius:9px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -70,7 +70,7 @@ button:active{opacity:.75}
 <!-- Main viewer app (hidden until paired) -->
 <main id="app" hidden>
   <form id="go"><input placeholder="URL or search" aria-label="URL or search"><button>Go</button></form>
-  <div id="viewer"><img id="screen" alt="Remote Brave screen"><textarea id="text" aria-label="Remote text input"></textarea></div>
+  <div id="viewer"><img id="screen" alt="Remote Brave screen"><textarea id="text" aria-label="Remote text input" inputmode="text" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"></textarea></div>
   <div id="bar">
     <button data-action="back">←</button>
     <button id="tabs">▢</button>
@@ -184,7 +184,7 @@ function startViewer() {
   control.onclose = expired;
   control.onmessage = e => {
     const r = JSON.parse(e.data);
-    if (r.ok && r.result?.text_input) text.focus();
+    if (r.ok && r.result?.text_input) text.focus({ preventScroll: true });
   };
 
   // Frame WebSocket
