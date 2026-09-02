@@ -16,8 +16,11 @@ Node.js, npm, Vite, Rust, and a browser dev server are **not** needed to run the
 
 1. Download `hwmr.exe` from the release package.
 2. Run `hwmr.exe`.
-3. On the phone, open the printed `Phone (trusted LAN)` URL.
-4. Enter the one-time pairing code printed by HWMR.
+3. Scan the QR printed in the console with the phone's normal Camera app.
+4. The HTTPS HWMR page opens and connects automatically when the browser
+   allows LAN access. Safari can use the offered **Open HWMR** local fallback.
+5. Manual connection remains available at the printed `Phone (trusted LAN)`
+   URL using the one-time pairing code.
 
 The host prints its dedicated profile location, local URL, LAN URL when a private LAN address is detected, pairing code, and CDP binding. Pairing tokens exist only in host memory; restarting HWMR invalidates existing phone sessions.
 

@@ -48,6 +48,7 @@ use windows_sys::Win32::{
 const VIEWPORT: &str = "430,932";
 const CDP_PORT: u16 = 9229;
 const PWA_ORIGIN: &str = "https://arts-night.github.io";
+const PWA_DEEP_LINK: &str = "https://arts-night.github.io/Headless-Web-Music-Remote/";
 
 async fn local_network_access_header(request: Request<Body>, next: Next) -> Response {
     let pwa_request = request
@@ -547,6 +548,19 @@ fn qr_text(payload: &str) -> Result<String> {
     }
     Ok(text)
 }
+
+fn deep_link(host: Ipv4Addr, port: u16, nonce: &str) -> String {
+    let payload = json!({
+        "v": 1,
+        "host": host.to_string(),
+        "port": port,
+        "nonce": nonce
+    })
+    .to_string();
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload);
+    format!("{PWA_DEEP_LINK}#connect={encoded}")
+}
+
 async fn show_qr() -> Result<()> {
     let response = reqwest::Client::new()
         .post(format!("http://127.0.0.1:{}/pair/qr", host_port()))
@@ -564,13 +578,7 @@ async fn show_qr() -> Result<()> {
 async fn issue_qr(app: &App) -> Result<String> {
     let address = lan_address().context("no trusted LAN address detected")?;
     let nonce = random_hex(16);
-    let payload = json!({
-        "v": 1,
-        "host": address.to_string(),
-        "port": host_port(),
-        "nonce": nonce.clone()
-    });
-    let qr = qr_text(&payload.to_string())?;
+    let qr = qr_text(&deep_link(address, host_port(), &nonce))?;
     let mut auth = app.auth.lock().await;
     auth.qr_nonce = Some(QrNonce {
         nonce,
@@ -993,6 +1001,13 @@ mod tests {
         let text = super::qr_text("http://example.com").unwrap();
         assert!(text.contains("██"));
         assert!(text.lines().count() > 10);
+    }
+    #[test]
+    fn deep_link_contains_only_bootstrap_data() {
+        let link = super::deep_link(Ipv4Addr::new(192, 168, 1, 20), 8787, &"a".repeat(32));
+        assert!(link.starts_with(PWA_DEEP_LINK));
+        assert!(link.contains("#connect="));
+        assert!(!link.contains("token"));
     }
     #[test]
     fn url_or_search() {

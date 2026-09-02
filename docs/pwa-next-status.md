@@ -47,7 +47,9 @@ Host protections retained on `pwa-next`:
 Implemented on `pwa-next`:
 
 - `manifest.webmanifest` with standalone display metadata and an app icon.
-- A Service Worker that caches only the GitHub Pages static shell (v2).
+- A Service Worker that caches only the GitHub Pages static shell (v5), with
+  network-first navigation so Safari receives updated HTML without manual
+  cache deletion.
 - Cache versioning and removal of obsolete shell caches.
 - LAN Host HTTP and WebSocket traffic is outside the Service Worker origin and
   is not cached.
@@ -80,6 +82,12 @@ that ports all features from the stable embedded `web/index.html`:
   available for refreshing it from another shell.
 - QR payloads accept only HWMR version 1, private IPv4 Host addresses, valid
   ports, and the expected one-time nonce format.
+- The console QR now contains an HTTPS GitHub Pages deep link. Pages parses the
+  fragment and starts connection automatically; Safari can open the same
+  nonce in the Host's local UI when direct LAN fetch is unsupported.
+- Local UI bootstrap consumes the one-time nonce, removes the fragment, and
+  never places the final session token in the URL.
+- Stable user-facing error codes are documented in `docs/error-codes.md`.
 
 Recent commits:
 

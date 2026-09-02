@@ -110,6 +110,19 @@ const qrScanner   = document.querySelector('#qr-scanner');
 const qrVideo     = document.querySelector('#qr-video');
 const btnScan     = document.querySelector('#btn-scan');
 const btnCancelScan = document.querySelector('#btn-cancel-scan');
+const ERROR_CODES = Object.freeze({
+  hostUnreachable: 'HWMR-NET-001',
+  pairingInvalid: 'HWMR-AUTH-001',
+  qrInvalid: 'HWMR-QR-001',
+  qrNotHwmr: 'HWMR-QR-002',
+  qrVersion: 'HWMR-QR-003',
+  qrExpired: 'HWMR-QR-004',
+  cameraDenied: 'HWMR-CAM-001',
+  cameraUnavailable: 'HWMR-CAM-002',
+  connectionLost: 'HWMR-WS-004',
+  safariFallback: 'HWMR-BROWSER-002',
+});
+const errorText = (message, code) => `${message}\n\nError: ${code}`;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let token        = '';   // in-memory only; never persisted
@@ -148,6 +161,39 @@ async function lanFetch(path, options = {}) {
   return fetch(new Request(base() + path, { ...options, targetAddressSpace: 'local' }));
 }
 
+function decodeBase64Url(value) {
+  const base64 = value.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((value.length + 3) % 4);
+  return JSON.parse(atob(base64));
+}
+
+function parseBootstrap(data) {
+  let payload;
+  try {
+    const url = new URL(data);
+    if (url.origin !== 'https://arts-night.github.io' || !url.pathname.endsWith('/Headless-Web-Music-Remote/')) {
+      return { error: errorText('This is not an HWMR connection link.', ERROR_CODES.qrNotHwmr) };
+    }
+    const match = url.hash.match(/^#connect=([^&]+)$/);
+    if (!match) return { error: errorText('This HWMR link is missing connection data.', ERROR_CODES.qrInvalid) };
+    payload = decodeBase64Url(match[1]);
+  } catch {
+    try { payload = typeof data === 'string' && data.trim().startsWith('{') ? JSON.parse(data) : decodeBase64Url(data); }
+    catch { return { error: errorText('This QR code is not a valid HWMR connection code.', ERROR_CODES.qrInvalid) }; }
+  }
+  const octets = typeof payload.host === 'string' ? payload.host.split('.').map(Number) : [];
+  const parts = payload.host?.split('.') || [];
+  const privateHost = octets.length === 4 && octets.every((value, index) =>
+    Number.isInteger(value) && value >= 0 && value <= 255 && String(value) === parts[index]
+  ) && (octets[0] === 10 || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+    (octets[0] === 192 && octets[1] === 168) || (octets[0] === 169 && octets[1] === 254));
+  if (payload.v !== 1) return { error: errorText('This HWMR QR uses an unsupported version.', ERROR_CODES.qrVersion) };
+  if (!privateHost || !Number.isInteger(payload.port) || payload.port < 1 || payload.port > 65535 ||
+      typeof payload.nonce !== 'string' || !/^[0-9a-f]{32}$/.test(payload.nonce)) {
+    return { error: errorText('This HWMR connection code is malformed.', ERROR_CODES.qrInvalid) };
+  }
+  return { payload };
+}
+
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 function authHeader() { return { authorization: `Bearer ${token}` }; }
 const wsSend = value => control?.send(JSON.stringify(value));
@@ -178,7 +224,7 @@ function showConnect(message) {
   fCode.focus();
 }
 
-function expired() { showConnect('Connection lost or session expired.\nYou can reconnect or change the PC address.'); }
+function expired() { showConnect(errorText('Connection lost or session expired.\nYou can reconnect or change the PC address.', ERROR_CODES.connectionLost)); }
 
 // ── Open main viewer after successful auth ─────────────────────────────────────
 function startViewer() {
@@ -220,7 +266,8 @@ async function doConnect(host, port, payload) {
       if (e.name === 'TypeError' || e.message.includes('Network')) {
         localFallbackLink.href = `http://${host}:${port}/${payload.nonce ? `#pair=${encodeURIComponent(JSON.stringify({ v: 1, nonce: payload.nonce }))}` : ''}`;
         localFallback.hidden = false;
-        return `Couldn't reach your HWMR PC at ${host}.\n\nCheck that:\n• HWMR is running\n• PC and phone are on the same network\n• Local network access is allowed`;
+        connectErr.textContent = errorText(`Safari or this browser could not connect directly to ${host}.\n\nCheck that HWMR is running and both devices are on the same network.`, ERROR_CODES.safariFallback);
+        return '';
       }
       return `Cannot reach HWMR Host (${e.message}).`;
     }
@@ -236,12 +283,12 @@ async function doConnect(host, port, payload) {
     } catch (e) {
       localFallbackLink.href = `http://${host}:${port}/${payload.nonce ? `#pair=${encodeURIComponent(JSON.stringify({ v: 1, nonce: payload.nonce }))}` : ''}`;
       localFallback.hidden = false;
-      return 'Network error during pairing.';
+      return errorText('The browser could not complete pairing with HWMR.', ERROR_CODES.safariFallback);
     }
     if (!pairRes.ok) {
       return payload.nonce
-        ? 'This QR code has expired or is invalid.\nGenerate a new QR on the PC and try again.'
-        : 'Pairing code is invalid or expired.';
+        ? errorText('This HWMR QR code has expired or was already used.\nGenerate a new QR on the PC and try again.', ERROR_CODES.qrExpired)
+        : errorText('The pairing code is invalid or expired.', ERROR_CODES.pairingInvalid);
     }
     const data = await pairRes.json();
     token = data.token;
@@ -304,9 +351,9 @@ btnScan.onclick = async () => {
   } catch (e) {
     stopQr();
     if (e.name === 'NotAllowedError') {
-      connectErr.textContent = 'Camera access was not allowed.\nYou can allow Camera access in your browser settings, or connect manually instead.';
+      connectErr.textContent = errorText('Camera access was not allowed.\nYou can allow it in your browser settings, or connect manually instead.', ERROR_CODES.cameraDenied);
     } else {
-      connectErr.textContent = 'No usable camera was found.\nYou can still connect manually.';
+      connectErr.textContent = errorText('No usable camera was found.\nYou can still connect manually.', ERROR_CODES.cameraUnavailable);
     }
   }
 };
@@ -333,20 +380,14 @@ function scanQr() {
 }
 
 async function handleQrData(data) {
+  const parsed = parseBootstrap(data);
+  if (parsed.error) {
+    qrErr.textContent = parsed.error;
+    qrAnimationFrame = requestAnimationFrame(scanQr);
+    return;
+  }
   try {
-    const payload = JSON.parse(data);
-    const octets = typeof payload.host === 'string' ? payload.host.split('.').map(Number) : [];
-    const privateHost = octets.length === 4 && octets.every((value, index) =>
-      Number.isInteger(value) && value >= 0 && value <= 255 && String(value) === payload.host.split('.')[index]
-    ) && (octets[0] === 10 || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
-      (octets[0] === 192 && octets[1] === 168) || (octets[0] === 169 && octets[1] === 254));
-    if (payload.v !== 1 || !privateHost || !Number.isInteger(payload.port) || payload.port < 1 || payload.port > 65535 ||
-        typeof payload.nonce !== 'string' || !/^[0-9a-f]{32}$/.test(payload.nonce)) {
-      qrErr.textContent = 'This HWMR connection code uses an unsupported version or is invalid.';
-      qrAnimationFrame = requestAnimationFrame(scanQr);
-      return;
-    }
-    
+    const payload = parsed.payload;
     stopQr();
     
     const err = await doConnect(payload.host, payload.port, { nonce: payload.nonce });
@@ -355,7 +396,7 @@ async function handleQrData(data) {
       connectErr.textContent = err;
     }
   } catch (e) {
-    qrErr.textContent = 'This QR code is not a valid HWMR connection code.';
+    qrErr.textContent = errorText('The HWMR connection could not be started.', ERROR_CODES.qrInvalid);
     qrAnimationFrame = requestAnimationFrame(scanQr);
   }
 }
@@ -458,6 +499,24 @@ text.onkeydown = e => {
     text.value = '';
   }
 };
+
+function bootstrapDeepLink() {
+  if (!location.hash.startsWith('#connect=')) return;
+  const parsed = parseBootstrap(location.href);
+  history.replaceState(null, '', location.pathname + location.search);
+  if (parsed.error) {
+    connectErr.textContent = parsed.error;
+    return;
+  }
+  const { host, port, nonce } = parsed.payload;
+  fHost.value = host;
+  fPort.value = String(port);
+  connectErr.textContent = 'Connecting…';
+  doConnect(host, port, { nonce }).then(err => {
+    if (err) connectErr.textContent = err;
+  });
+}
+bootstrapDeepLink();
 
 // ── Service Worker registration ────────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
