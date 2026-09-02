@@ -156,6 +156,9 @@ function fit() {
   }
 }
 new ResizeObserver(fit).observe(viewer);
+window.visualViewport?.addEventListener('resize', fit);
+window.addEventListener('orientationchange', fit);
+setInterval(fit, 1000);
 
 // ── Session expiry / disconnect ───────────────────────────────────────────────
 function showConnect(message) {
