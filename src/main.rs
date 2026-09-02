@@ -243,6 +243,10 @@ struct BrowserVersion {
 enum Control {
     Tap { x: f64, y: f64 },
     Scroll { x: f64, y: f64, delta_y: f64 },
+    TouchStart { x: f64, y: f64, touch_id: u32 },
+    TouchMove { x: f64, y: f64, touch_id: u32 },
+    TouchEnd { touch_id: u32 },
+    TouchCancel { touch_id: u32 },
     Resize { width: u32, height: u32 },
     Back,
     Forward,
@@ -834,6 +838,38 @@ async fn navigate_history(cdp: &Cdp, offset: i64) -> Result<Value> {
     )
     .await
 }
+
+fn touch_payload(
+    event: &str,
+    point: Option<(f64, f64)>,
+    touch_id: u32,
+    viewport: (u32, u32),
+) -> Result<Value> {
+    let touch_points = if let Some((x, y)) = point {
+        if !x.is_finite() || !y.is_finite() {
+            bail!("invalid touch coordinates");
+        }
+        let x = x.clamp(0.0, viewport.0 as f64);
+        let y = y.clamp(0.0, viewport.1 as f64);
+        json!([{"x":x,"y":y,"radiusX":1,"radiusY":1,"rotationAngle":0,"force":1,"id":touch_id}])
+    } else {
+        json!([])
+    };
+    Ok(json!({"type":event,"touchPoints":touch_points}))
+}
+
+async fn dispatch_touch(
+    cdp: &Cdp,
+    app: &App,
+    event: &str,
+    point: Option<(f64, f64)>,
+    touch_id: u32,
+) -> Result<Value> {
+    let viewport = *app.viewport.lock().await;
+    let params = touch_payload(event, point, touch_id, viewport)?;
+    cdp.command("Input.dispatchTouchEvent", params).await
+}
+
 async fn controls(mut socket: WebSocket, app: App) {
     if !authenticate(&mut socket, &app).await {
         return;
@@ -868,6 +904,18 @@ async fn controls(mut socket: WebSocket, app: App) {
                             json!({"type":"mouseWheel","x":x,"y":y,"deltaX":0,"deltaY":delta_y}),
                         )
                         .await
+                    }
+                    Ok(Control::TouchStart { x, y, touch_id }) => {
+                        dispatch_touch(&cdp, &app, "touchStart", Some((x, y)), touch_id).await
+                    }
+                    Ok(Control::TouchMove { x, y, touch_id }) => {
+                        dispatch_touch(&cdp, &app, "touchMove", Some((x, y)), touch_id).await
+                    }
+                    Ok(Control::TouchEnd { touch_id }) => {
+                        dispatch_touch(&cdp, &app, "touchEnd", None, touch_id).await
+                    }
+                    Ok(Control::TouchCancel { touch_id }) => {
+                        dispatch_touch(&cdp, &app, "touchCancel", None, touch_id).await
                     }
                     Ok(Control::Resize { width, height }) => {
                         let width = width.clamp(1, 1920);
@@ -1026,5 +1074,32 @@ mod tests {
         assert_eq!(metrics["mobile"], true);
         assert_eq!(metrics["width"], 390);
         assert_eq!(metrics["height"], 760);
+    }
+    #[test]
+    fn touch_payload_preserves_event_and_id() {
+        let start = touch_payload("touchStart", Some((12.0, 34.0)), 7, (430, 932)).unwrap();
+        assert_eq!(start["type"], "touchStart");
+        assert_eq!(start["touchPoints"][0]["id"], 7);
+        assert_eq!(start["touchPoints"][0]["x"], 12.0);
+        let end = touch_payload("touchEnd", None, 7, (430, 932)).unwrap();
+        assert_eq!(end["touchPoints"].as_array().unwrap().len(), 0);
+    }
+    #[test]
+    fn touch_payload_clamps_and_rejects_invalid_coordinates() {
+        let clamped = touch_payload("touchMove", Some((-2.0, 1000.0)), 1, (430, 932)).unwrap();
+        assert_eq!(clamped["touchPoints"][0]["x"], 0.0);
+        assert_eq!(clamped["touchPoints"][0]["y"], 932.0);
+        assert!(touch_payload("touchMove", Some((f64::NAN, 1.0)), 1, (430, 932)).is_err());
+    }
+    #[test]
+    fn touch_control_messages_parse() {
+        assert!(matches!(
+            serde_json::from_str::<Control>(r#"{"type":"touch_start","x":1,"y":2,"touch_id":9}"#),
+            Ok(Control::TouchStart { touch_id: 9, .. })
+        ));
+        assert!(matches!(
+            serde_json::from_str::<Control>(r#"{"type":"touch_end","touch_id":9}"#),
+            Ok(Control::TouchEnd { touch_id: 9 })
+        ));
     }
 }

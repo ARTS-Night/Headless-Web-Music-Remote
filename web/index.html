@@ -27,7 +27,7 @@ input{width:min(65vw,320px)}
 </main>
 <script>
 const app=document.querySelector('#app'),viewer=document.querySelector('#viewer'),image=document.querySelector('#screen'),pair=document.querySelector('#pair'),error=document.querySelector('#pair-error'),text=document.querySelector('#text'),tabList=document.querySelector('#tab-list');
-let control,frames,token=localStorage.hwmrToken,composing=false,suppressInput=false,remoteEditable=false,touch,moved=false,viewport='';
+let control,frames,token=localStorage.hwmrToken,composing=false,suppressInput=false,remoteEditable=false,nativeTouch=null,pendingTouchMove=null,touchMoveFrame=0,suppressClick=false,viewport='';
 const auth=ws=>ws.send(JSON.stringify({type:'auth',token}));
 const send=value=>control?.send(JSON.stringify(value));
 const viewerSize=()=>{const r=viewer.getBoundingClientRect();return[ Math.round(r.width),Math.round(r.height) ]};
@@ -44,7 +44,7 @@ function start(){
   control=new WebSocket(`ws://${location.host}/ws/control`);
   frames=new WebSocket(`ws://${location.host}/ws/frame`);frames.binaryType='blob';
   control.onopen=()=>{auth(control);requestAnimationFrame(fit)};frames.onopen=()=>auth(frames);
-  control.onclose=expired;frames.onclose=expired;
+  control.onclose=()=>{if(nativeTouch&&control.readyState===WebSocket.OPEN)send({type:'touch_cancel',touch_id:nativeTouch.id});nativeTouch=null;pendingTouchMove=null;expired()};frames.onclose=expired;
   control.onmessage=e=>{const r=JSON.parse(e.data);if(r.ok&&r.result?.text_input){remoteEditable=true;text.focus({preventScroll:true})}};
   frames.onmessage=e=>{const old=image.src;image.src=URL.createObjectURL(e.data);if(old)URL.revokeObjectURL(old)};
 }
@@ -68,9 +68,11 @@ function fragmentPairPayload(){
 }
 function point(e){
   const r=image.getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;
-  return{x:x*(image.naturalWidth||430),y:y*(image.naturalHeight||932)};
+  const width=image.naturalWidth||430,height=image.naturalHeight||932;
+  return{x:Math.max(0,Math.min(width,x*width)),y:Math.max(0,Math.min(height,y*height))};
 }
-image.onclick=e=>{if(!moved){remoteEditable=false;send({type:'tap',...point(e)})}moved=false};
+image.onclick=e=>{if(suppressClick||e.pointerType==='touch'){suppressClick=false;return}remoteEditable=false;send({type:'tap',...point(e)});
+};
 image.onwheel=e=>{e.preventDefault();send({type:'scroll',...point(e),delta_y:e.deltaY})};
 const sendText=value=>{if(!value)return;send({type:'insert_text',text:value});suppressInput=true;text.value=''};
 text.oncompositionstart=()=>{composing=true;suppressInput=false};
@@ -90,9 +92,26 @@ document.querySelector('#tabs').onclick=async()=>{
   const r=await fetch('/tabs',{headers:{authorization:`Bearer ${token}`}});if(r.status===401)return expired();
   const tabs=await r.json();tabList.replaceChildren(...tabs.items.map(t=>{const b=document.createElement('button');b.textContent=`${t.active?'● ':''}${t.title||t.url}`;b.title=t.url;b.className=t.active?'active':'';b.onclick=()=>{tabList.hidden=true;send({type:'select_tab',id:t.id})};return b}));tabList.hidden=!tabList.hidden;
 };
-image.addEventListener('touchstart',e=>{touch=e.touches[0];moved=false},{passive:true});
-image.addEventListener('touchmove',e=>{if(!touch)return;const next=e.touches[0];if(Math.abs(touch.clientX-next.clientX)+Math.abs(touch.clientY-next.clientY)>3)moved=true;send({type:'scroll',...point(next),delta_y:touch.clientY-next.clientY});touch=next;e.preventDefault()},{passive:false});
-image.addEventListener('touchend',()=>{touch=undefined});
+const flushTouchMove=()=>{if(pendingTouchMove&&nativeTouch){send(pendingTouchMove);pendingTouchMove=null}touchMoveFrame=0};
+const queueTouchMove=move=>{pendingTouchMove=move;if(!touchMoveFrame)touchMoveFrame=requestAnimationFrame(flushTouchMove)};
+image.addEventListener('pointerdown',e=>{
+  if(e.pointerType!=='touch'||!e.isPrimary||nativeTouch)return;
+  e.preventDefault();nativeTouch={id:e.pointerId};suppressClick=false;
+  if(image.setPointerCapture)image.setPointerCapture(e.pointerId);
+  send({type:'touch_start',...point(e),touch_id:e.pointerId});
+},{passive:false});
+image.addEventListener('pointermove',e=>{
+  if(!nativeTouch||e.pointerId!==nativeTouch.id)return;
+  e.preventDefault();queueTouchMove({type:'touch_move',...point(e),touch_id:nativeTouch.id});
+},{passive:false});
+const finishTouch=(e,cancelled)=>{
+  if(!nativeTouch||e.pointerId!==nativeTouch.id)return;
+  e.preventDefault();flushTouchMove();const id=nativeTouch.id;send({type:cancelled?'touch_cancel':'touch_end',touch_id:id});
+  if(image.releasePointerCapture)image.releasePointerCapture(id);nativeTouch=null;pendingTouchMove=null;suppressClick=true;setTimeout(()=>{suppressClick=false},500);
+};
+image.addEventListener('pointerup',e=>finishTouch(e,false),{passive:false});
+image.addEventListener('pointercancel',e=>finishTouch(e,true),{passive:false});
+window.addEventListener('pagehide',()=>{if(nativeTouch&&control?.readyState===WebSocket.OPEN)send({type:'touch_cancel',touch_id:nativeTouch.id});nativeTouch=null;pendingTouchMove=null});
 const bootstrap=fragmentPairPayload();
 if(bootstrap)pairWith(bootstrap);else start();
 </script>
