@@ -48,12 +48,24 @@ function start(){
   control.onmessage=e=>{const r=JSON.parse(e.data);if(r.ok&&r.result?.text_input)text.focus({preventScroll:true})};
   frames.onmessage=e=>{const old=image.src;image.src=URL.createObjectURL(e.data);if(old)URL.revokeObjectURL(old)};
 }
-async function pairWith(code){
-  const r=await fetch('/pair',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code})});
+async function pairWith(payload){
+  const r=await fetch('/pair',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
   if(!r.ok){error.textContent='Incorrect pairing code';return}
   token=(await r.json()).token;localStorage.hwmrToken=token;start();
 }
-document.querySelector('#pair form').onsubmit=e=>{e.preventDefault();pairWith(e.currentTarget.querySelector('input').value.trim())};
+document.querySelector('#pair form').onsubmit=e=>{e.preventDefault();pairWith({code:e.currentTarget.querySelector('input').value.trim()})};
+function fragmentPairPayload(){
+  const match=location.hash.match(/^#pair=([^&]+)$/);
+  if(!match)return null;
+  let payload=null;
+  try{payload=JSON.parse(decodeURIComponent(match[1]))}catch{}
+  history.replaceState(null,'',location.pathname+location.search);
+  if(payload?.v!==1||typeof payload.nonce!=='string'||!/^[0-9a-f]{32}$/.test(payload.nonce)){
+    error.textContent='The local pairing link is invalid or expired';
+    return null;
+  }
+  return {nonce:payload.nonce};
+}
 function point(e){
   const r=image.getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;
   return{x:x*(image.naturalWidth||430),y:y*(image.naturalHeight||932)};
@@ -78,5 +90,6 @@ document.querySelector('#tabs').onclick=async()=>{
 image.addEventListener('touchstart',e=>{touch=e.touches[0];moved=false},{passive:true});
 image.addEventListener('touchmove',e=>{if(!touch)return;const next=e.touches[0];if(Math.abs(touch.clientX-next.clientX)+Math.abs(touch.clientY-next.clientY)>3)moved=true;send({type:'scroll',...point(next),delta_y:touch.clientY-next.clientY});touch=next;e.preventDefault()},{passive:false});
 image.addEventListener('touchend',()=>{touch=undefined});
-start();
+const bootstrap=fragmentPairPayload();
+if(bootstrap)pairWith(bootstrap);else start();
 </script>

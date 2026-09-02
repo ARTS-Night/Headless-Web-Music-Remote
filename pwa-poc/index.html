@@ -15,6 +15,8 @@ html,body{margin:0;background:#111;color:#eee;font:14px system-ui;height:100%;he
 #connect-form{display:grid;gap:0;max-width:320px;width:100%}
 #connect-last{font-size:12px;color:#aaa;margin:6px 0 2px}
 #connect-error{color:#ff8b8b;min-height:1.2em;font-size:13px}
+#local-fallback{font-size:13px;color:#ccc;line-height:1.4}
+#local-fallback a{display:inline-block;margin-top:6px;padding:9px 13px;border-radius:18px;background:#5b9cff;color:#111;text-decoration:none}
 /* ── Shared input/button ── */
 input,button{box-sizing:border-box;border:0;border-radius:18px;padding:9px 13px;background:#292929;color:#fff}
 input{font-size:16px}
@@ -54,6 +56,7 @@ button:active{opacity:.75}
     <button id="btn-connect" type="button">Connect</button>
     <p id="lna-note">Allow network access when your browser asks.</p>
     <p id="connect-error"></p>
+    <p id="local-fallback" hidden>Open the local HWMR controller to connect directly.<br><a id="local-fallback-link" href="#">Open HWMR</a></p>
   </div>
 </div>
 
@@ -95,6 +98,8 @@ const fPort       = document.querySelector('#f-port');
 const fCode       = document.querySelector('#f-code');
 const btnConnect  = document.querySelector('#btn-connect');
 const connectErr  = document.querySelector('#connect-error');
+const localFallback = document.querySelector('#local-fallback');
+const localFallbackLink = document.querySelector('#local-fallback-link');
 const app         = document.querySelector('#app');
 const viewer      = document.querySelector('#viewer');
 const image       = document.querySelector('#screen');
@@ -205,6 +210,7 @@ async function doConnect(host, port, payload) {
   currentBase = `http://${host}:${port}`;
   btnConnect.disabled = true;
   btnConnect.textContent = 'Connecting…';
+  localFallback.hidden = true;
 
   try {
     let health;
@@ -212,6 +218,8 @@ async function doConnect(host, port, payload) {
       health = await lanFetch('/health');
     } catch (e) {
       if (e.name === 'TypeError' || e.message.includes('Network')) {
+        localFallbackLink.href = `http://${host}:${port}/${payload.nonce ? `#pair=${encodeURIComponent(JSON.stringify({ v: 1, nonce: payload.nonce }))}` : ''}`;
+        localFallback.hidden = false;
         return `Couldn't reach your HWMR PC at ${host}.\n\nCheck that:\n• HWMR is running\n• PC and phone are on the same network\n• Local network access is allowed`;
       }
       return `Cannot reach HWMR Host (${e.message}).`;
@@ -226,6 +234,8 @@ async function doConnect(host, port, payload) {
         body: JSON.stringify(payload),
       });
     } catch (e) {
+      localFallbackLink.href = `http://${host}:${port}/${payload.nonce ? `#pair=${encodeURIComponent(JSON.stringify({ v: 1, nonce: payload.nonce }))}` : ''}`;
+      localFallback.hidden = false;
       return 'Network error during pairing.';
     }
     if (!pairRes.ok) {
