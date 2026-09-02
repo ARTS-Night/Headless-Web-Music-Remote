@@ -29,7 +29,7 @@ button:active{opacity:.75}
 #bar,#go{display:flex;gap:8px;justify-content:center}#bar{flex-wrap:wrap}
 #go input{flex:1;min-width:0}
 /* ── Mobile-friendly text bridge: focusable without shifting the layout ── */
-#text{position:fixed;left:50%;bottom:0;width:1px;height:1px;padding:0;border:0;opacity:.01;background:transparent;color:transparent;caret-color:transparent;z-index:3}
+#text{position:fixed;left:50%;bottom:0;width:2px;height:2px;padding:0;border:0;opacity:.01;background:transparent;color:transparent;caret-color:transparent;font-size:16px;z-index:3}
 /* ── Tab overlay ── */
 #tab-list{position:fixed;z-index:2;left:12px;right:12px;bottom:max(72px,calc(60px + env(safe-area-inset-bottom)));max-height:50dvh;overflow:auto;padding:8px;background:#1c1c1c;border-radius:12px;box-shadow:0 8px 28px #0009}
 #tab-list button{display:block;width:100%;margin:4px 0;border-radius:9px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -82,6 +82,7 @@ button:active{opacity:.75}
     <button data-key="Space">▶</button>
     <button data-action="reload">↻</button>
     <button data-action="forward">→</button>
+    <button id="keyboard" type="button" aria-label="Show keyboard">⌨</button>
     <button id="logout" type="button">Log out</button>
   </div>
   <section id="tab-list" hidden aria-label="Tabs"></section>
@@ -130,7 +131,8 @@ let qrStream     = null;
 let qrAnimationFrame = null;
 let control, frames;
 let composing    = false;
-let composed     = '';
+let suppressInput = false;
+let remoteEditable = false;
 let touch        = null;
 let moved        = false;
 let viewport     = '';
@@ -237,7 +239,7 @@ function startViewer() {
   control.onclose = expired;
   control.onmessage = e => {
     const r = JSON.parse(e.data);
-    if (r.ok && r.result?.text_input) text.focus({ preventScroll: true });
+    if (r.ok && r.result?.text_input) { remoteEditable = true; text.focus({ preventScroll: true }); }
   };
 
   // Frame WebSocket
@@ -417,7 +419,7 @@ function point(e) {
   };
 }
 
-image.onclick = e => { if (!moved) wsSend({ type: 'tap', ...point(e) }); moved = false; };
+image.onclick = e => { if (!moved) { remoteEditable = false; wsSend({ type: 'tap', ...point(e) }); } moved = false; };
 image.onwheel = e => { e.preventDefault(); wsSend({ type: 'scroll', ...point(e), delta_y: e.deltaY }); };
 
 image.addEventListener('touchstart', e => { touch = e.touches[0]; moved = false; }, { passive: true });
@@ -477,27 +479,31 @@ document.querySelector('#logout').onclick = async () => {
   showConnect('Logged out. Check the HWMR window for the new pairing code.');
 };
 
-// ── Text bridge (IME-safe) ─────────────────────────────────────────────────────
-text.oncompositionstart = () => { composing = true; };
-text.oncompositionend = e => {
-  composing = false;
-  composed = e.data;
-  wsSend({ type: 'insert_text', text: e.data });
-  text.value = '';
-};
-text.oninput = e => {
-  if (!composing && e.data) {
-    if (e.data !== composed) wsSend({ type: 'insert_text', text: e.data });
-    composed = '';
-    text.value = '';
+// ── Text bridge (IME-safe, including Safari beforeinput fallbacks) ─────────────
+const sendText = value => { if (!value) return; wsSend({ type: 'insert_text', text: value }); suppressInput = true; text.value = ''; };
+text.oncompositionstart = () => { composing = true; suppressInput = false; };
+text.oncompositionend = e => { composing = false; sendText(text.value || e.data || ''); };
+text.onbeforeinput = e => {
+  if (composing) return;
+  if (e.inputType === 'deleteContentBackward' || e.inputType === 'deleteContentForward') {
+    e.preventDefault(); wsSend({ type: 'key', key: e.inputType === 'deleteContentBackward' ? 'Backspace' : 'Delete' }); text.value = ''; return;
   }
+  if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+    e.preventDefault(); wsSend({ type: 'key', key: 'Enter' }); text.value = ''; return;
+  }
+  if ((e.inputType === 'insertText' || e.inputType === 'insertReplacementText' || e.inputType === 'insertFromPaste') && e.data) sendText(e.data);
 };
+text.oninput = () => { if (composing) return; if (suppressInput) { suppressInput = false; return; } sendText(text.value); };
 text.onkeydown = e => {
   if (['Backspace', 'Enter', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
     e.preventDefault();
     wsSend({ type: 'key', key: e.key });
     text.value = '';
   }
+};
+document.querySelector('#keyboard').onclick = () => {
+  if (!remoteEditable) { connectErr.textContent = 'Tap a text field in the remote page first.'; return; }
+  text.focus({ preventScroll: true });
 };
 
 function bootstrapDeepLink() {

@@ -14,7 +14,7 @@ input{width:min(65vw,320px)}
 #pair{position:fixed;inset:0;display:grid;place-content:center;gap:10px;text-align:center;z-index:1}
 #version{margin:-6px 0 8px;color:#888;font-size:12px}
 #pair input{width:220px}#pair-error{color:#ff8b8b}
-#text{position:fixed;left:50%;bottom:0;width:1px;height:1px;padding:0;border:0;opacity:.01;background:transparent;color:transparent;caret-color:transparent;z-index:3}
+#text{position:fixed;left:50%;bottom:0;width:2px;height:2px;padding:0;border:0;opacity:.01;background:transparent;color:transparent;caret-color:transparent;font-size:16px;z-index:3}
 #tab-list{position:fixed;z-index:2;left:12px;right:12px;bottom:max(72px,calc(60px + env(safe-area-inset-bottom)));max-height:50dvh;overflow:auto;padding:8px;background:#1c1c1c;border-radius:12px;box-shadow:0 8px 28px #0009}
 #tab-list button{display:block;width:100%;margin:4px 0;border-radius:9px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#tab-list button.active{background:#4a6fa5}
 </style>
@@ -22,12 +22,12 @@ input{width:min(65vw,320px)}
 <main id="app" hidden>
   <form id="go"><input placeholder="URL or search" aria-label="URL or search"><button>Go</button></form>
   <div id="viewer"><img id="screen" alt="Remote Brave screen"><textarea id="text" aria-label="Remote text input" inputmode="text" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"></textarea></div>
-  <div id="bar"><button data-action="back">←</button><button id="tabs">▢</button><button data-key="Space">▶</button><button data-action="reload">↻</button><button data-action="forward">→</button><button id="logout" type="button">Log out</button></div>
+  <div id="bar"><button data-action="back">←</button><button id="tabs">▢</button><button data-key="Space">▶</button><button data-action="reload">↻</button><button data-action="forward">→</button><button id="keyboard" type="button" aria-label="Show keyboard">⌨</button><button id="logout" type="button">Log out</button></div>
   <section id="tab-list" hidden aria-label="Tabs"></section>
 </main>
 <script>
 const app=document.querySelector('#app'),viewer=document.querySelector('#viewer'),image=document.querySelector('#screen'),pair=document.querySelector('#pair'),error=document.querySelector('#pair-error'),text=document.querySelector('#text'),tabList=document.querySelector('#tab-list');
-let control,frames,token=localStorage.hwmrToken,composing=false,composed='',touch,moved=false,viewport='';
+let control,frames,token=localStorage.hwmrToken,composing=false,suppressInput=false,remoteEditable=false,touch,moved=false,viewport='';
 const auth=ws=>ws.send(JSON.stringify({type:'auth',token}));
 const send=value=>control?.send(JSON.stringify(value));
 const viewerSize=()=>{const r=viewer.getBoundingClientRect();return[ Math.round(r.width),Math.round(r.height) ]};
@@ -45,7 +45,7 @@ function start(){
   frames=new WebSocket(`ws://${location.host}/ws/frame`);frames.binaryType='blob';
   control.onopen=()=>{auth(control);requestAnimationFrame(fit)};frames.onopen=()=>auth(frames);
   control.onclose=expired;frames.onclose=expired;
-  control.onmessage=e=>{const r=JSON.parse(e.data);if(r.ok&&r.result?.text_input)text.focus({preventScroll:true})};
+  control.onmessage=e=>{const r=JSON.parse(e.data);if(r.ok&&r.result?.text_input){remoteEditable=true;text.focus({preventScroll:true})}};
   frames.onmessage=e=>{const old=image.src;image.src=URL.createObjectURL(e.data);if(old)URL.revokeObjectURL(old)};
 }
 async function pairWith(payload){
@@ -70,12 +70,15 @@ function point(e){
   const r=image.getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;
   return{x:x*(image.naturalWidth||430),y:y*(image.naturalHeight||932)};
 }
-image.onclick=e=>{if(!moved)send({type:'tap',...point(e)});moved=false};
+image.onclick=e=>{if(!moved){remoteEditable=false;send({type:'tap',...point(e)})}moved=false};
 image.onwheel=e=>{e.preventDefault();send({type:'scroll',...point(e),delta_y:e.deltaY})};
-text.oncompositionstart=()=>composing=true;
-text.oncompositionend=e=>{composing=false;composed=e.data;send({type:'insert_text',text:e.data});text.value=''};
-text.oninput=e=>{if(!composing&&e.data){if(e.data!==composed)send({type:'insert_text',text:e.data});composed='';text.value=''}};
+const sendText=value=>{if(!value)return;send({type:'insert_text',text:value});suppressInput=true;text.value=''};
+text.oncompositionstart=()=>{composing=true;suppressInput=false};
+text.oncompositionend=e=>{composing=false;sendText(text.value||e.data||'')};
+text.onbeforeinput=e=>{if(composing)return;if(e.inputType==='deleteContentBackward'||e.inputType==='deleteContentForward'){e.preventDefault();send({type:'key',key:e.inputType==='deleteContentBackward'?'Backspace':'Delete'});text.value='';return}if(e.inputType==='insertLineBreak'||e.inputType==='insertParagraph'){e.preventDefault();send({type:'key',key:'Enter'});text.value='';return}if((e.inputType==='insertText'||e.inputType==='insertReplacementText'||e.inputType==='insertFromPaste')&&e.data)sendText(e.data)};
+text.oninput=()=>{if(composing)return;if(suppressInput){suppressInput=false;return}sendText(text.value)};
 text.onkeydown=e=>{if(['Backspace','Enter','ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();send({type:'key',key:e.key});text.value=''}};
+document.querySelector('#keyboard').onclick=()=>{if(!remoteEditable){error.textContent='Tap a text field in the remote page first.';return}text.focus({preventScroll:true})};
 document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>send({type:b.dataset.action}));
 document.querySelector('[data-key]').onclick=e=>send({type:'key',key:e.currentTarget.dataset.key});
 document.querySelector('#logout').onclick=async()=>{
